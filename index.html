@@ -522,6 +522,25 @@ function isValidIPv4(ip) {
   return parts.length === 4 && parts.every(p => p >= 0 && p <= 255);
 }
 
+/**
+ * Check if an IP is a subnet mask (contiguous high bits).
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isSubnetMask(ip) {
+  const MASKS = new Set([
+    '0.0.0.0', '128.0.0.0', '192.0.0.0', '224.0.0.0', '240.0.0.0',
+    '248.0.0.0', '252.0.0.0', '254.0.0.0', '255.0.0.0', '255.128.0.0',
+    '255.192.0.0', '255.224.0.0', '255.240.0.0', '255.248.0.0',
+    '255.252.0.0', '255.254.0.0', '255.255.0.0', '255.255.128.0',
+    '255.255.192.0', '255.255.224.0', '255.255.240.0', '255.255.248.0',
+    '255.255.252.0', '255.255.254.0', '255.255.255.0', '255.255.255.128',
+    '255.255.255.192', '255.255.255.224', '255.255.255.240',
+    '255.255.255.248', '255.255.255.252', '255.255.255.254', '255.255.255.255',
+  ]);
+  return MASKS.has(ip);
+}
+
 /** RFC 5737 documentation IP pools for public IP replacement. */
 const DOC_IP_POOLS = [
   { base: [192, 0, 2], max: 254 },
@@ -732,8 +751,16 @@ function sanitizeConfig(configText) {
     }
   );
 
-  // FortiGate: set name "community_name" under config system snmp community
-  // This is handled by object-name patterns below if needed.
+  // SRX/Junos: set snmp community <name>
+  sanitized = sanitized.replace(
+    /(set\s+snmp\s+community\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
 
   // -----------------------------------------------------------------------
   // 4. USERNAMES
@@ -1287,6 +1314,7 @@ function sanitizeConfig(configText) {
 
   sanitized = sanitized.replace(ipRegex, (match) => {
     if (!isValidIPv4(match)) return match;
+    if (isSubnetMask(match)) return match;
 
     if (isPrivateOrReserved(match)) {
       // Private IP -> synthetic private IP
