@@ -22,6 +22,34 @@
   --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 
+html.light {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface2: #ebedf2;
+  --border: #d1d5de;
+  --text: #1a1d27;
+  --text-dim: #5c6170;
+  --accent: #4a6cf7;
+  --accent-hover: #3b5ce0;
+  --danger: #e03131;
+  --success: #2b8a3e;
+  --warning: #e67700;
+  --orange: #d9480f;
+}
+
+html.light .risk-notice {
+  border-color: #e6c200;
+  background: #fffbe6;
+}
+
+html.light textarea {
+  background: var(--surface);
+}
+
+html.light textarea[readonly] {
+  background: var(--bg);
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -443,6 +471,29 @@ tr:hover td { background: var(--surface); }
   margin-bottom: 0;
 }
 
+.theme-toggle {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .hidden { display: none !important; }
 </style>
 </head>
@@ -453,9 +504,12 @@ tr:hover td { background: var(--surface); }
     <h1>Firewall Config Sanitizer</h1>
     <div class="subtitle">100% client-side -- no data leaves your browser</div>
   </div>
-  <div class="tabs">
-    <button class="tab active" data-tab="sanitize">Sanitize</button>
-    <button class="tab" data-tab="restore">Restore</button>
+  <div class="header-right">
+    <div class="tabs">
+      <button class="tab active" data-tab="sanitize">Sanitize</button>
+      <button class="tab" data-tab="restore">Restore</button>
+    </div>
+    <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">&#9790;</button>
   </div>
 </header>
 
@@ -1793,6 +1847,20 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ---- Theme toggle ----
+const themeToggle = $('#themeToggle');
+const storedTheme = localStorage.getItem('theme');
+if (storedTheme === 'light') {
+  document.documentElement.classList.add('light');
+  themeToggle.innerHTML = '&#9788;';
+}
+
+themeToggle.addEventListener('click', () => {
+  const isLight = document.documentElement.classList.toggle('light');
+  themeToggle.innerHTML = isLight ? '&#9788;' : '&#9790;';
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+});
 </script>
 </body>
 </html>
