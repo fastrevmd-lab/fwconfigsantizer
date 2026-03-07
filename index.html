@@ -363,6 +363,86 @@ tr:hover td { background: var(--surface); }
   margin-top: 8px;
 }
 
+/* Info sections on landing page */
+.info-section {
+  text-align: left;
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.info-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+.info-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.info-chip {
+  padding: 6px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.info-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.info-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.risk-notice {
+  border-color: #5a3e00;
+  background: #1a1600;
+}
+
+.risk-notice h3 {
+  color: var(--warning);
+}
+
+.risk-notice p {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.risk-notice p:last-child {
+  margin-bottom: 0;
+}
+
 .hidden { display: none !important; }
 </style>
 </head>
@@ -396,7 +476,76 @@ tr:hover td { background: var(--surface); }
 
     <div id="noDataMessage">
       <p class="big">Paste or upload a firewall config to get started</p>
-      <p>The sanitizer will detect public IPs, private IPs, zone names, credentials,<br>hostnames, object names, and other identifiable information.</p>
+
+      <div class="info-section">
+        <h3>Supported Platforms</h3>
+        <div class="info-chips">
+          <span class="info-chip">Cisco ASA / FTD</span>
+          <span class="info-chip">Fortinet FortiGate (FortiOS)</span>
+          <span class="info-chip">Palo Alto PAN-OS / Panorama</span>
+          <span class="info-chip">Juniper SRX (Junos)</span>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <h3>What Gets Sanitized</h3>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Public IPs</span>
+            <span class="info-desc">Replaced with RFC 5737 documentation IPs (192.0.2.x, 198.51.100.x, 203.0.113.x)</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Private IPs</span>
+            <span class="info-desc">RFC 1918 addresses obfuscated with synthetic 10.0.x.x addresses. Subnet masks are preserved.</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Zone Names</span>
+            <span class="info-desc">Interface zones and security zones replaced with generic names (zone-0, zone-1, ...)</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Object &amp; Group Names</span>
+            <span class="info-desc">Named network objects, address groups, service groups, and ACL names replaced (obj-0, obj-1, ...)</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Passwords &amp; Hashes</span>
+            <span class="info-desc">Encrypted passwords, password hashes ($1$, $5$, $6$, ENC), and enable secrets</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Pre-Shared Keys</span>
+            <span class="info-desc">IKE/IPsec PSKs, API keys, RADIUS/TACACS shared secrets, and tunnel credentials</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Usernames</span>
+            <span class="info-desc">Local admin accounts, LDAP bind DNs, RADIUS/TACACS usernames (built-in "admin" is kept)</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">SNMP Communities</span>
+            <span class="info-desc">SNMP v1/v2c community strings in all vendor formats</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Certificates</span>
+            <span class="info-desc">PEM-encoded private key blocks (RSA, EC, DSA) and XML certificate key elements</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">BGP AS Numbers</span>
+            <span class="info-desc">Local AS, peer AS, and autonomous-system numbers that could identify your organization</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Hostnames &amp; FQDNs</span>
+            <span class="info-desc">Device hostname, DNS/NTP/RADIUS/syslog server FQDNs, and domain names</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Descriptions &amp; Comments</span>
+            <span class="info-desc">Free-text description fields and remark lines that may contain identifying details</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-section risk-notice">
+        <h3>Risk Disclaimer</h3>
+        <p>This tool is provided on a <strong>best-effort basis</strong> and does not guarantee complete removal of all sensitive or identifying information. Firewall configurations are complex and vary widely across vendors, software versions, and deployment styles. There may be organization-specific data -- such as custom naming conventions, internal topology hints, policy structures, interface descriptions, routing details, VPN peer relationships, or vendor-specific extensions -- that this tool does not recognize or sanitize.</p>
+        <p><strong>You are responsible for reviewing the sanitized output before sharing it externally.</strong> Always verify the output meets your organization's security and data handling requirements. This tool runs entirely in your browser and no data is transmitted externally, but the sanitized configuration should still be treated with care.</p>
+      </div>
     </div>
 
     <div id="resultsArea" class="hidden">
