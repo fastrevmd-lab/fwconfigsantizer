@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Firewall Config Sanitizer</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #242836;
+  --border: #2e3345;
+  --text: #e1e4ed;
+  --text-dim: #8b90a0;
+  --accent: #6c8cff;
+  --accent-hover: #8aa4ff;
+  --danger: #ff6b6b;
+  --success: #51cf66;
+  --warning: #ffd43b;
+  --orange: #ff922b;
+  --radius: 8px;
+  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+header h1 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+header .subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.tab {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tab:hover:not(.active) {
+  color: var(--text);
+  background: var(--surface2);
+}
+
+main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.active {
+  display: block;
+}
+
+.input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.btn:hover { background: var(--surface2); border-color: var(--accent); }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover { background: var(--accent-hover); }
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-success {
+  background: #2b8a3e;
+  border-color: #2b8a3e;
+  color: #fff;
+}
+
+.btn-success:hover { background: #37a34a; }
+
+.btn-danger {
+  background: #c92a2a;
+  border-color: #c92a2a;
+  color: #fff;
+}
+
+.btn-danger:hover { background: #e03131; }
+
+textarea {
+  width: 100%;
+  min-height: 400px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 16px;
+  resize: vertical;
+  outline: none;
+}
+
+textarea:focus { border-color: var(--accent); }
+
+textarea[readonly] {
+  background: var(--bg);
+  cursor: default;
+}
+
+.filename {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.filename strong { color: var(--text); }
+
+.stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  background: var(--bg);
+  border-radius: 12px;
+}
+
+.stat .count {
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.output-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.output-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.download-bar {
+  display: flex;
+  gap: 8px;
+}
+
+/* Mapping table */
+.mapping-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--surface2);
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+tr:hover td { background: var(--surface); }
+
+.type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.type-badge.public_ip    { background: #862e2e33; color: var(--danger); }
+.type-badge.private_ip   { background: #ff922b33; color: var(--orange); }
+.type-badge.zone         { background: #6c8cff33; color: var(--accent); }
+.type-badge.hash         { background: #86286833; color: #e599c0; }
+.type-badge.key          { background: #86286833; color: #e599c0; }
+.type-badge.username     { background: #51cf6633; color: var(--success); }
+.type-badge.community    { background: #ffd43b33; color: var(--warning); }
+.type-badge.certificate  { background: #86286833; color: #e599c0; }
+.type-badge.hostname     { background: #22b8cf33; color: #66d9e8; }
+.type-badge.bgp          { background: #845ef733; color: #b197fc; }
+.type-badge.object_name  { background: #6c8cff33; color: var(--accent); }
+.type-badge.description  { background: #86868633; color: var(--text-dim); }
+.type-badge.domain       { background: #22b8cf33; color: #66d9e8; }
+.type-badge.sys_hostname { background: #ff922b33; color: var(--orange); }
+
+/* Restore panel */
+.restore-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px;
+  text-align: center;
+  color: var(--text-dim);
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.drop-zone p { margin-top: 8px; font-size: 13px; }
+.drop-zone .big { font-size: 16px; font-weight: 600; color: var(--text); }
+
+.file-status {
+  display: flex;
+  gap: 16px;
+}
+
+.file-card {
+  flex: 1;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.file-card.loaded { border-color: var(--success); }
+
+.file-card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.file-card p {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+#noDataMessage {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-dim);
+}
+
+#noDataMessage p {
+  margin-top: 8px;
+}
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Firewall Config Sanitizer</h1>
+    <div class="subtitle">100% client-side -- no data leaves your browser</div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="sanitize">Sanitize</button>
+    <button class="tab" data-tab="restore">Restore</button>
+  </div>
+</header>
+
+<main>
+  <!-- ============ SANITIZE PANEL ============ -->
+  <div id="sanitizePanel" class="panel active">
+    <div class="input-section">
+      <div class="upload-bar">
+        <button class="btn" id="uploadBtn">Upload Config File</button>
+        <input type="file" id="fileInput" accept=".txt,.conf,.cfg,.xml,.log,.bak" style="display:none">
+        <span class="filename" id="fileLabel"></span>
+        <div style="flex:1"></div>
+        <button class="btn-primary btn" id="sanitizeBtn" disabled>Sanitize</button>
+        <button class="btn btn-danger hidden" id="clearBtn">Clear</button>
+      </div>
+      <textarea id="configInput" placeholder="Paste your firewall configuration here, or upload a file above.&#10;&#10;Supported: Cisco ASA/FTD, FortiGate, Palo Alto PAN-OS, Juniper SRX"></textarea>
+    </div>
+
+    <div id="noDataMessage">
+      <p class="big">Paste or upload a firewall config to get started</p>
+      <p>The sanitizer will detect public IPs, private IPs, zone names, credentials,<br>hostnames, object names, and other identifiable information.</p>
+    </div>
+
+    <div id="resultsArea" class="hidden">
+      <div class="stats-bar" id="statsBar"></div>
+
+      <div class="output-section">
+        <div class="output-header">
+          <h2>Sanitized Configuration</h2>
+          <div class="download-bar">
+            <button class="btn" id="copyBtn">Copy</button>
+            <button class="btn-success btn" id="dlSanitized">Download Sanitized Config</button>
+            <button class="btn btn-primary" id="dlMapping">Download Mapping File</button>
+          </div>
+        </div>
+        <textarea id="sanitizedOutput" readonly></textarea>
+      </div>
+
+      <div class="output-section">
+        <div class="output-header">
+          <h2>Sanitization Mapping</h2>
+          <span class="filename" id="mappingCount"></span>
+        </div>
+        <div class="mapping-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Placeholder</th>
+                <th>Original Value</th>
+              </tr>
+            </thead>
+            <tbody id="mappingBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RESTORE PANEL ============ -->
+  <div id="restorePanel" class="panel">
+    <div class="restore-section">
+      <div class="file-status">
+        <div class="file-card" id="restoreConfigCard">
+          <h3>Sanitized Config</h3>
+          <p id="restoreConfigStatus">No file loaded</p>
+          <button class="btn" id="restoreConfigBtn" style="margin-top:8px">Upload Sanitized Config</button>
+          <input type="file" id="restoreConfigInput" accept=".txt,.conf,.cfg,.xml,.log,.sanitized" style="display:none">
+        </div>
+        <div class="file-card" id="restoreMappingCard">
+          <h3>Mapping File</h3>
+          <p id="restoreMappingStatus">No file loaded</p>
+          <button class="btn" id="restoreMappingBtn" style="margin-top:8px">Upload Mapping JSON</button>
+          <input type="file" id="restoreMappingInput" accept=".json" style="display:none">
+        </div>
+      </div>
+      <button class="btn-primary btn" id="restoreBtn" disabled>Restore Original Config</button>
+      <textarea id="restoredOutput" readonly placeholder="Restored configuration will appear here..."></textarea>
+      <button class="btn-success btn hidden" id="dlRestored">Download Restored Config</button>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ===========================================================================
+   Firewall Config Sanitizer - Engine
+   Based on: github.com/fastrevmd-lab/firewall-intent-converter (engine.js)
+   Improvements: private IP obfuscation, zone names, object names, descriptions,
+   domain names, system hostname, multi-vendor coverage, two-file output.
+   =========================================================================== */
+
+/**
+ * Detect the firewall vendor from config text.
+ * @param {string} text
+ * @returns {'asa'|'fortigate'|'panos'|'srx'|'unknown'}
+ */
+function detectVendor(text) {
+  const sample = text.substring(0, 5000).toLowerCase();
+
+  if (sample.includes('config firewall policy') || sample.includes('config system global') ||
+      sample.includes('set srcintf') || sample.includes('set dstintf')) {
+    return 'fortigate';
+  }
+  if (sample.includes('<config') || sample.includes('<vsys') ||
+      sample.includes('<rulebase') || sample.includes('<entry name=')) {
+    return 'panos';
+  }
+  if (sample.includes('set security policies') || sample.includes('set security zones') ||
+      sample.includes('from-zone') || sample.includes('set interfaces')) {
+    return 'srx';
+  }
+  if (sample.includes('asa version') || sample.includes('access-list') ||
+      sample.includes('nameif') || sample.includes('access-group') ||
+      sample.includes('object network') || sample.includes('fixup protocol')) {
+    return 'asa';
+  }
+  return 'unknown';
+}
+
+/**
+ * Check if an IPv4 address is in private/reserved ranges.
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isPrivateOrReserved(ip) {
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a >= 224) return true;
+  if (a === 0) return true;
+  return false;
+}
+
+/**
+ * Check if a string is a valid IPv4 address.
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isValidIPv4(ip) {
+  const parts = ip.split('.').map(Number);
+  return parts.length === 4 && parts.every(p => p >= 0 && p <= 255);
+}
+
+/** RFC 5737 documentation IP pools for public IP replacement. */
+const DOC_IP_POOLS = [
+  { base: [192, 0, 2], max: 254 },
+  { base: [198, 51, 100], max: 254 },
+  { base: [203, 0, 113], max: 254 },
+];
+
+/**
+ * Generate a synthetic documentation IP for a given index.
+ * @param {number} idx
+ * @returns {string}
+ */
+function docIP(idx) {
+  for (const pool of DOC_IP_POOLS) {
+    if (idx < pool.max) {
+      return `${pool.base[0]}.${pool.base[1]}.${pool.base[2]}.${idx + 1}`;
+    }
+    idx -= pool.max;
+  }
+  // Overflow: use numbered placeholder
+  return `198.18.0.${(idx % 254) + 1}`;
+}
+
+/**
+ * Generate a synthetic private IP for a given index.
+ * @param {number} idx
+ * @returns {string}
+ */
+function synthPrivateIP(idx) {
+  const third = Math.floor(idx / 254) % 256;
+  const fourth = (idx % 254) + 1;
+  return `10.0.${third}.${fourth}`;
+}
+
+/**
+ * Sanitize a firewall configuration, replacing all identifiable information.
+ * @param {string} configText - Raw firewall config
+ * @returns {{ sanitizedText: string, replacements: Array, stats: object, vendor: string }}
+ */
+function sanitizeConfig(configText) {
+  if (!configText || typeof configText !== 'string') {
+    throw new Error('configText is required and must be a string');
+  }
+
+  const replacements = [];
+  const counter = {
+    hash: 0, key: 0, user: 0, publicIp: 0, privateIp: 0,
+    community: 0, cert: 0, host: 0, bgp: 0, zone: 0,
+    objName: 0, description: 0, domain: 0, sysHostname: 0,
+  };
+
+  let sanitized = configText;
+  const vendor = detectVendor(configText);
+
+  // De-duplication maps: same original value -> same placeholder
+  const publicIpMap = new Map();
+  const privateIpMap = new Map();
+  const zoneMap = new Map();
+  const objNameMap = new Map();
+  const domainMap = new Map();
+  const usernameMap = new Map();
+  const hostnameMap = new Map();
+
+  // Helper: register a replacement and return the placeholder
+  function addReplacement(type, placeholder, original) {
+    replacements.push({ type, placeholder, original });
+    return placeholder;
+  }
+
+  // -----------------------------------------------------------------------
+  // 1. PASSWORD HASHES
+  // -----------------------------------------------------------------------
+
+  // XML tag hashes: <phash>, <password-hash>, <encrypted-secret>
+  sanitized = sanitized.replace(
+    /(<(?:phash|password-hash|encrypted-secret)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Attribute-style hashes: password "$1$...", secret "$sha1$..."
+  sanitized = sanitized.replace(
+    /(password|secret|pre-shared-key|auth-key)\s+"(\$[^"]+)"/gi,
+    (match, keyword, value) => {
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${keyword} "${placeholder}"`;
+    }
+  );
+
+  // FortiGate ENC hashes: set password ENC <base64>
+  sanitized = sanitized.replace(
+    /(set\s+(?:password|passwd|private-key|secret)\s+)(ENC\s+\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // ASA encrypted passwords: password <hash> encrypted
+  sanitized = sanitized.replace(
+    /(password\s+)(\S+)(\s+encrypted)/gi,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 2. PRE-SHARED KEYS, API KEYS, SECRETS
+  // -----------------------------------------------------------------------
+
+  // Nested XML keys: <pre-shared-key><key>VALUE</key></pre-shared-key>
+  sanitized = sanitized.replace(
+    /(<(?:pre-shared-key|api-key|auth-key|secret|key)>)\s*(<key>)([^<]+)(<\/key>)/gi,
+    (match, outerOpen, innerOpen, value, innerClose) => {
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value.trim());
+      return `${outerOpen}${innerOpen}${placeholder}${innerClose}`;
+    }
+  );
+
+  // Simple XML key tags
+  sanitized = sanitized.replace(
+    /(<(?:pre-shared-key|api-key|auth-key|secret-key)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Set-format secrets (quoted)
+  sanitized = sanitized.replace(
+    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password)\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // Set-format secrets (unquoted, excluding already handled ENC)
+  sanitized = sanitized.replace(
+    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password)\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_') || value === '"' || value.startsWith('ENC')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // RADIUS/TACACS server secrets
+  sanitized = sanitized.replace(
+    /((?:radius-server|tacplus-server|tacacs-server)\s+\S+\s+secret\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // ASA: tunnel-group ... ipsec-attributes + ikev1 pre-shared-key
+  sanitized = sanitized.replace(
+    /((?:ikev[12]\s+)?pre-shared-key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_') || value === '<' || value === '{') return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 3. SNMP COMMUNITIES
+  // -----------------------------------------------------------------------
+
+  // XML
+  sanitized = sanitized.replace(
+    /(<community>)([^<]+)(<\/community>)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // ASA/FortiGate/SRX: snmp-server community <name>
+  sanitized = sanitized.replace(
+    /(snmp-server\s+community\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // FortiGate: set name "community_name" under config system snmp community
+  // This is handled by object-name patterns below if needed.
+
+  // -----------------------------------------------------------------------
+  // 4. USERNAMES
+  // -----------------------------------------------------------------------
+
+  // XML auth context tags
+  sanitized = sanitized.replace(
+    /(<(?:admin-username|radius-username|tacplus-username|ldap-bind-dn)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      const trimmed = value.trim();
+      if (trimmed === 'admin' || trimmed.startsWith('REDACTED_')) return match;
+      let placeholder = usernameMap.get(trimmed);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(trimmed, placeholder);
+        addReplacement('username', placeholder, trimmed);
+      }
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // PAN-OS: <users><entry name="xxx">
+  sanitized = sanitized.replace(
+    /(<entry\s+name=")([^"]+)("(?:[^>]*)>\s*(?:<phash|<password|<permissions))/gi,
+    (match, prefix, name, suffix) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      let placeholder = usernameMap.get(name);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(name, placeholder);
+        addReplacement('username', placeholder, name);
+      }
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+
+  // ASA: username <name> password/privilege
+  sanitized = sanitized.replace(
+    /(username\s+)(\S+)(\s+(?:password|privilege|attributes))/gi,
+    (match, prefix, name, suffix) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      let placeholder = usernameMap.get(name);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(name, placeholder);
+        addReplacement('username', placeholder, name);
+      }
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+
+  // FortiGate: config system admin → edit "admin_name"
+  sanitized = sanitized.replace(
+    /(config\s+system\s+admin[\s\S]*?edit\s+)"([^"]+)"/gi,
+    (match, prefix, name) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      let placeholder = usernameMap.get(name);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(name, placeholder);
+        addReplacement('username', placeholder, name);
+      }
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // SRX: set system login user <name>
+  sanitized = sanitized.replace(
+    /(set\s+system\s+login\s+user\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      let placeholder = usernameMap.get(name);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(name, placeholder);
+        addReplacement('username', placeholder, name);
+      }
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 5. CERTIFICATE PRIVATE KEYS
+  // -----------------------------------------------------------------------
+
+  // PEM blocks
+  sanitized = sanitized.replace(
+    /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/g,
+    (match) => {
+      const placeholder = `REDACTED_CERT_${counter.cert++}`;
+      addReplacement('certificate', placeholder, '[PRIVATE KEY BLOCK]');
+      return placeholder;
+    }
+  );
+
+  // XML private key tags
+  sanitized = sanitized.replace(
+    /(<(?:private-key|certificate-key|ssl-key)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_CERT_${counter.cert++}`;
+      addReplacement('certificate', placeholder, '[CERTIFICATE KEY]');
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 6. SYSTEM HOSTNAME
+  // -----------------------------------------------------------------------
+
+  // ASA: hostname DEVICE_NAME
+  sanitized = sanitized.replace(
+    /^(hostname\s+)(\S+)/gim,
+    (match, prefix, name) => {
+      if (name.startsWith('sanitized-')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // FortiGate: set hostname "DEVICE_NAME"
+  sanitized = sanitized.replace(
+    /(set\s+hostname\s+)"([^"]+)"/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('sanitized-')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // FortiGate unquoted: set hostname DEVICE_NAME
+  sanitized = sanitized.replace(
+    /(set\s+hostname\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('sanitized-') || name.startsWith('"')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // PAN-OS: <hostname>NAME</hostname>
+  sanitized = sanitized.replace(
+    /(<hostname>)([^<]+)(<\/hostname>)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('sanitized-')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, value.trim());
+      counter.sysHostname++;
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // SRX: set system host-name <name>
+  sanitized = sanitized.replace(
+    /(set\s+system\s+host-name\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('sanitized-')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // SRX hierarchical: host-name <name>;
+  sanitized = sanitized.replace(
+    /(host-name\s+)(\S+)(;)/gi,
+    (match, prefix, name, semi) => {
+      if (name.startsWith('sanitized-')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}${placeholder}${semi}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 7. SERVER HOSTNAMES / FQDNs
+  // -----------------------------------------------------------------------
+
+  // XML tags for servers
+  sanitized = sanitized.replace(
+    /(<(?:ldap-server-address|radius-server-ip|tacplus-server-ip|ntp-server-address|dns-server-address|server-address|server-name|server-host|syslog-server)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('REDACTED_') || trimmed.startsWith('host-')) return match;
+      // Skip if it's an IP (handled later)
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(trimmed)) return match;
+      let placeholder = hostnameMap.get(trimmed);
+      if (!placeholder) {
+        placeholder = `host-${counter.host++}.example.net`;
+        hostnameMap.set(trimmed, placeholder);
+        addReplacement('hostname', placeholder, trimmed);
+      }
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Set-format server hostnames
+  sanitized = sanitized.replace(
+    /(set\s+(?:system\s+)?(?:radius-server|tacplus-server|name-server|ntp\s+server|syslog|dns)\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_') || value.startsWith('host-')) return match;
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
+      let placeholder = hostnameMap.get(value);
+      if (!placeholder) {
+        placeholder = `host-${counter.host++}.example.net`;
+        hostnameMap.set(value, placeholder);
+        addReplacement('hostname', placeholder, value);
+      }
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // ASA: logging host <interface> <hostname>
+  sanitized = sanitized.replace(
+    /(logging\s+host\s+\S+\s+)([a-zA-Z][\w.-]+\.[a-zA-Z]{2,})/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('host-')) return match;
+      let placeholder = hostnameMap.get(value);
+      if (!placeholder) {
+        placeholder = `host-${counter.host++}.example.net`;
+        hostnameMap.set(value, placeholder);
+        addReplacement('hostname', placeholder, value);
+      }
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 8. BGP AS NUMBERS
+  // -----------------------------------------------------------------------
+
+  // XML
+  sanitized = sanitized.replace(
+    /(<(?:local-as|peer-as|autonomous-system|local-as-number|remote-as)>)(\d+)(<\/)/gi,
+    (match, open, value, close) => {
+      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
+      addReplacement('bgp', placeholder, value);
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Set/CLI format
+  sanitized = sanitized.replace(
+    /((?:autonomous-system|router\s+bgp|neighbor\s+\S+\s+remote-as|set\s+local-as|set\s+remote-as)\s+)(\d+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
+      addReplacement('bgp', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 9. DESCRIPTIONS, COMMENTS, REMARKS
+  // -----------------------------------------------------------------------
+
+  // ASA: description <text> / remark <text>
+  sanitized = sanitized.replace(
+    /^(\s*(?:description|remark)\s+)(.+)$/gim,
+    (match, prefix, text) => {
+      if (text.trim() === '(sanitized)') return match;
+      addReplacement('description', '(sanitized)', text.trim());
+      counter.description++;
+      return `${prefix}(sanitized)`;
+    }
+  );
+
+  // FortiGate: set comment "..."
+  sanitized = sanitized.replace(
+    /(set\s+comment\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value === '(sanitized)') return match;
+      addReplacement('description', '(sanitized)', value);
+      counter.description++;
+      return `${prefix}"(sanitized)"`;
+    }
+  );
+
+  // FortiGate: set comments "..."
+  sanitized = sanitized.replace(
+    /(set\s+comments\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value === '(sanitized)') return match;
+      addReplacement('description', '(sanitized)', value);
+      counter.description++;
+      return `${prefix}"(sanitized)"`;
+    }
+  );
+
+  // PAN-OS: <description>text</description>
+  sanitized = sanitized.replace(
+    /(<description>)([^<]+)(<\/description>)/gi,
+    (match, open, value, close) => {
+      if (value.trim() === '(sanitized)') return match;
+      addReplacement('description', '(sanitized)', value.trim());
+      counter.description++;
+      return `${open}(sanitized)${close}`;
+    }
+  );
+
+  // SRX: description "text"
+  sanitized = sanitized.replace(
+    /(description\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value === '(sanitized)') return match;
+      addReplacement('description', '(sanitized)', value);
+      counter.description++;
+      return `${prefix}"(sanitized)"`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 10. DOMAIN NAMES (FQDNs that aren't server hostnames)
+  // -----------------------------------------------------------------------
+
+  // FortiGate: set fqdn "domain.com"
+  sanitized = sanitized.replace(
+    /(set\s+fqdn\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('example-') || value.startsWith('REDACTED_')) return match;
+      let placeholder = domainMap.get(value);
+      if (!placeholder) {
+        placeholder = `example-${counter.domain++}.net`;
+        domainMap.set(value, placeholder);
+        addReplacement('domain', placeholder, value);
+      }
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // ASA: fqdn v4 domain.com
+  sanitized = sanitized.replace(
+    /(fqdn\s+v[46]\s+)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('example-')) return match;
+      let placeholder = domainMap.get(value);
+      if (!placeholder) {
+        placeholder = `example-${counter.domain++}.net`;
+        domainMap.set(value, placeholder);
+        addReplacement('domain', placeholder, value);
+      }
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // PAN-OS: <fqdn>domain.com</fqdn>
+  sanitized = sanitized.replace(
+    /(<fqdn>)([^<]+)(<\/fqdn>)/gi,
+    (match, open, value, close) => {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('example-')) return match;
+      let placeholder = domainMap.get(trimmed);
+      if (!placeholder) {
+        placeholder = `example-${counter.domain++}.net`;
+        domainMap.set(trimmed, placeholder);
+        addReplacement('domain', placeholder, trimmed);
+      }
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // set domain-name / domain-name <fqdn>
+  sanitized = sanitized.replace(
+    /((?:set\s+)?domain-name\s+)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('example-')) return match;
+      let placeholder = domainMap.get(value);
+      if (!placeholder) {
+        placeholder = `example-${counter.domain++}.net`;
+        domainMap.set(value, placeholder);
+        addReplacement('domain', placeholder, value);
+      }
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 11. ZONE NAMES
+  // -----------------------------------------------------------------------
+
+  // Helper to get or create zone placeholder
+  function zoneReplace(original) {
+    if (!original || original === 'any' || original === 'global' || original === 'local') return original;
+    if (original.startsWith('zone-') || original.startsWith('REDACTED_')) return original;
+    let placeholder = zoneMap.get(original);
+    if (!placeholder) {
+      placeholder = `zone-${counter.zone++}`;
+      zoneMap.set(original, placeholder);
+      addReplacement('zone', placeholder, original);
+    }
+    return placeholder;
+  }
+
+  // ASA: nameif <zone_name>
+  sanitized = sanitized.replace(
+    /(nameif\s+)(\S+)/gi,
+    (match, prefix, name) => `${prefix}${zoneReplace(name)}`
+  );
+
+  // ASA: access-group <acl_name> in interface <zone>
+  sanitized = sanitized.replace(
+    /((?:in|out)\s+interface\s+)(\S+)/gi,
+    (match, prefix, name) => `${prefix}${zoneReplace(name)}`
+  );
+
+  // FortiGate: set srcintf "zone" / set dstintf "zone"
+  sanitized = sanitized.replace(
+    /(set\s+(?:srcintf|dstintf)\s+)"([^"]+)"/gi,
+    (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
+  );
+
+  // FortiGate: set associated-interface "zone"
+  sanitized = sanitized.replace(
+    /(set\s+associated-interface\s+)"([^"]+)"/gi,
+    (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
+  );
+
+  // FortiGate: config system zone → edit "zone_name"
+  sanitized = sanitized.replace(
+    /(config\s+system\s+zone[\s\S]*?edit\s+)"([^"]+)"/gi,
+    (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
+  );
+
+  // FortiGate: set interface "port1" "port2" under zone
+  // This handles zone member interfaces - we'll leave interface names alone
+  // since they're structural (port1, wan1, etc.)
+
+  // PAN-OS: <zone><entry name="zone_name">
+  sanitized = sanitized.replace(
+    /(<zone>\s*<entry\s+name=")([^"]+)(")/gi,
+    (match, prefix, name, suffix) => `${prefix}${zoneReplace(name)}${suffix}`
+  );
+
+  // PAN-OS: <to><member>zone</member></to> and <from><member>zone</member></from>
+  sanitized = sanitized.replace(
+    /(<(?:to|from)>\s*<member>)([^<]+)(<\/member>)/gi,
+    (match, prefix, name, suffix) => `${prefix}${zoneReplace(name)}${suffix}`
+  );
+
+  // SRX: security-zone <name> or from-zone <name> to-zone <name>
+  sanitized = sanitized.replace(
+    /((?:security-zone|from-zone|to-zone)\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      // Don't replace keywords
+      if (name === '{' || name === 'to-zone' || name === 'policy') return match;
+      return `${prefix}${zoneReplace(name)}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 12. OBJECT / GROUP NAMES (can identify org topology)
+  // -----------------------------------------------------------------------
+
+  // Helper for object name replacement
+  function objReplace(original) {
+    if (!original || original === 'any' || original === 'all' || original === 'none') return original;
+    if (original.startsWith('obj-') || original.startsWith('REDACTED_')) return original;
+    // Skip common built-in service names
+    const builtins = new Set([
+      'tcp', 'udp', 'icmp', 'ip', 'http', 'https', 'ssh', 'telnet', 'ftp',
+      'dns', 'smtp', 'pop3', 'imap', 'ntp', 'snmp', 'syslog', 'dhcp',
+      'tftp', 'bgp', 'ospf', 'ldap', 'ldaps', 'kerberos', 'radius',
+      'tacacs', 'h323', 'sip', 'rtsp', 'sqlnet', 'mysql', 'mssql',
+      'oracle', 'rdp', 'vnc', 'smb', 'netbios', 'ping', 'traceroute',
+    ]);
+    if (builtins.has(original.toLowerCase())) return original;
+    let placeholder = objNameMap.get(original);
+    if (!placeholder) {
+      placeholder = `obj-${counter.objName++}`;
+      objNameMap.set(original, placeholder);
+      addReplacement('object_name', placeholder, original);
+    }
+    return placeholder;
+  }
+
+  // ASA: object network <name> / object-group network <name> / object service <name>
+  sanitized = sanitized.replace(
+    /(object(?:-group)?\s+(?:network|service)\s+)(\S+)/gi,
+    (match, prefix, name) => `${prefix}${objReplace(name)}`
+  );
+
+  // ASA: access-list <acl_name>
+  sanitized = sanitized.replace(
+    /(access-list\s+)(\S+)(\s+(?:extended|standard|remark|line))/gi,
+    (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
+  );
+
+  // ASA: access-group <acl_name>
+  sanitized = sanitized.replace(
+    /(access-group\s+)(\S+)/gi,
+    (match, prefix, name) => `${prefix}${objReplace(name)}`
+  );
+
+  // FortiGate: config firewall address → edit "name"
+  sanitized = sanitized.replace(
+    /(config\s+firewall\s+(?:address|addrgrp|service\s+custom|service\s+group|vip|ippool)\s*\n\s*edit\s+)"([^"]+)"/gi,
+    (match, prefix, name) => `${prefix}"${objReplace(name)}"`
+  );
+
+  // FortiGate: set srcaddr/dstaddr/service "name"
+  sanitized = sanitized.replace(
+    /(set\s+(?:srcaddr|dstaddr|service|dstaddr6|srcaddr6|poolname|nat-source-vip|groups|member)\s+)"([^"]+)"/gi,
+    (match, prefix, name) => {
+      // Handle space-separated lists inside quotes
+      const parts = name.split('" "');
+      if (parts.length > 1) {
+        const replaced = parts.map(p => objReplace(p)).join('" "');
+        return `${prefix}"${replaced}"`;
+      }
+      return `${prefix}"${objReplace(name)}"`;
+    }
+  );
+
+  // PAN-OS: <address><entry name="name"> / <address-group><entry name="name">
+  sanitized = sanitized.replace(
+    /(<(?:address|address-group|service|service-group|application-group|tag)>\s*<entry\s+name=")([^"]+)(")/gi,
+    (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
+  );
+
+  // PAN-OS: <source|destination><member>name</member>
+  sanitized = sanitized.replace(
+    /(<(?:source|destination|source-user|tag)>\s*<member>)([^<]+)(<\/member>)/gi,
+    (match, prefix, name, suffix) => {
+      if (name === 'any' || name === 'all' || /^\d/.test(name)) return match;
+      return `${prefix}${objReplace(name)}${suffix}`;
+    }
+  );
+
+  // SRX: address-set <name> / address <name>
+  sanitized = sanitized.replace(
+    /((?:address-set|address|application-set|application)\s+)(\S+)(\s+(?:\{|address|protocol))/gi,
+    (match, prefix, name, suffix) => {
+      if (name === '{') return match;
+      return `${prefix}${objReplace(name)}${suffix}`;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 13. PUBLIC IP ADDRESSES (replaced with RFC 5737 documentation IPs)
+  // -----------------------------------------------------------------------
+
+  const ipRegex = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
+
+  sanitized = sanitized.replace(ipRegex, (match) => {
+    if (!isValidIPv4(match)) return match;
+
+    if (isPrivateOrReserved(match)) {
+      // Private IP -> synthetic private IP
+      if (privateIpMap.has(match)) return privateIpMap.get(match);
+      const idx = counter.privateIp++;
+      const placeholder = synthPrivateIP(idx);
+      privateIpMap.set(match, placeholder);
+      addReplacement('private_ip', placeholder, match);
+      return placeholder;
+    }
+
+    // Public IP -> documentation IP
+    if (publicIpMap.has(match)) return publicIpMap.get(match);
+    const idx = counter.publicIp++;
+    const placeholder = docIP(idx);
+    publicIpMap.set(match, placeholder);
+    addReplacement('public_ip', placeholder, match);
+    return placeholder;
+  });
+
+  // -----------------------------------------------------------------------
+  // Build stats
+  // -----------------------------------------------------------------------
+
+  return {
+    sanitizedText: sanitized,
+    replacements,
+    vendor,
+    stats: {
+      hashes: counter.hash,
+      keys: counter.key,
+      communities: counter.community,
+      usernames: counter.user,
+      publicIPs: counter.publicIp,
+      privateIPs: counter.privateIp,
+      certificates: counter.cert,
+      hostnames: counter.host,
+      bgpAS: counter.bgp,
+      zones: counter.zone,
+      objectNames: counter.objName,
+      descriptions: counter.description,
+      domains: counter.domain,
+      sysHostnames: counter.sysHostname,
+      total: replacements.length,
+    },
+  };
+}
+
+/**
+ * Restore a sanitized config using a mapping file.
+ * @param {string} sanitizedText
+ * @param {Array} mappings
+ * @returns {string}
+ */
+function restoreConfig(sanitizedText, mappings) {
+  let restored = sanitizedText;
+  // Sort by placeholder length descending to avoid partial matches
+  const sorted = [...mappings].sort((a, b) => b.placeholder.length - a.placeholder.length);
+  for (const entry of sorted) {
+    // Skip description entries (they all map to "(sanitized)" which is a common placeholder)
+    if (entry.type === 'description') continue;
+    // Global replace of placeholder with original
+    restored = restored.split(entry.placeholder).join(entry.original);
+  }
+  return restored;
+}
+
+/* ===========================================================================
+   UI Logic
+   =========================================================================== */
+
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+// State
+let currentResult = null;
+let restoreConfigText = null;
+let restoreMappings = null;
+let loadedFilename = 'config.txt';
+
+// Tab switching
+$$('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    $$('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    $$('.panel').forEach(p => p.classList.remove('active'));
+    $(`#${tab.dataset.tab}Panel`).classList.add('active');
+  });
+});
+
+// File upload
+$('#uploadBtn').addEventListener('click', () => $('#fileInput').click());
+$('#fileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  loadedFilename = file.name;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    $('#configInput').value = ev.target.result;
+    $('#fileLabel').innerHTML = `<strong>${file.name}</strong> (${formatSize(file.size)})`;
+    $('#sanitizeBtn').disabled = false;
+  };
+  reader.readAsText(file);
+});
+
+// Enable sanitize button on input
+$('#configInput').addEventListener('input', () => {
+  $('#sanitizeBtn').disabled = !$('#configInput').value.trim();
+});
+
+// Clear
+$('#clearBtn').addEventListener('click', () => {
+  $('#configInput').value = '';
+  $('#fileLabel').innerHTML = '';
+  $('#sanitizeBtn').disabled = true;
+  $('#clearBtn').classList.add('hidden');
+  $('#resultsArea').classList.add('hidden');
+  $('#noDataMessage').classList.remove('hidden');
+  currentResult = null;
+});
+
+// Sanitize
+$('#sanitizeBtn').addEventListener('click', () => {
+  const input = $('#configInput').value;
+  if (!input.trim()) return;
+
+  try {
+    currentResult = sanitizeConfig(input);
+  } catch (err) {
+    alert('Error sanitizing config: ' + err.message);
+    return;
+  }
+
+  // Show results
+  $('#noDataMessage').classList.add('hidden');
+  $('#resultsArea').classList.remove('hidden');
+  $('#clearBtn').classList.remove('hidden');
+
+  // Stats
+  renderStats(currentResult.stats, currentResult.vendor);
+
+  // Output
+  $('#sanitizedOutput').value = currentResult.sanitizedText;
+
+  // Mapping table
+  renderMappingTable(currentResult.replacements);
+  $('#mappingCount').textContent = `${currentResult.replacements.length} replacements`;
+});
+
+// Copy
+$('#copyBtn').addEventListener('click', () => {
+  if (!currentResult) return;
+  navigator.clipboard.writeText(currentResult.sanitizedText).then(() => {
+    const btn = $('#copyBtn');
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+});
+
+// Download sanitized config
+$('#dlSanitized').addEventListener('click', () => {
+  if (!currentResult) return;
+  const ext = loadedFilename.split('.').pop();
+  const baseName = loadedFilename.replace(/\.[^.]+$/, '');
+  download(`${baseName}.sanitized.${ext}`, currentResult.sanitizedText);
+});
+
+// Download mapping
+$('#dlMapping').addEventListener('click', () => {
+  if (!currentResult) return;
+  const baseName = loadedFilename.replace(/\.[^.]+$/, '');
+  const mappingData = {
+    metadata: {
+      timestamp: new Date().toISOString(),
+      originalFilename: loadedFilename,
+      vendor: currentResult.vendor,
+      stats: currentResult.stats,
+    },
+    mappings: currentResult.replacements,
+  };
+  download(`${baseName}.mapping.json`, JSON.stringify(mappingData, null, 2));
+});
+
+// ---- Restore panel ----
+$('#restoreConfigBtn').addEventListener('click', () => $('#restoreConfigInput').click());
+$('#restoreConfigInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    restoreConfigText = ev.target.result;
+    $('#restoreConfigStatus').textContent = `${file.name} (${formatSize(file.size)})`;
+    $('#restoreConfigCard').classList.add('loaded');
+    checkRestoreReady();
+  };
+  reader.readAsText(file);
+});
+
+$('#restoreMappingBtn').addEventListener('click', () => $('#restoreMappingInput').click());
+$('#restoreMappingInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      restoreMappings = data.mappings || data;
+      $('#restoreMappingStatus').textContent = `${file.name} - ${restoreMappings.length} mappings`;
+      $('#restoreMappingCard').classList.add('loaded');
+      checkRestoreReady();
+    } catch (err) {
+      alert('Invalid JSON mapping file: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+function checkRestoreReady() {
+  $('#restoreBtn').disabled = !(restoreConfigText && restoreMappings);
+}
+
+$('#restoreBtn').addEventListener('click', () => {
+  if (!restoreConfigText || !restoreMappings) return;
+  const restored = restoreConfig(restoreConfigText, restoreMappings);
+  $('#restoredOutput').value = restored;
+  $('#dlRestored').classList.remove('hidden');
+});
+
+$('#dlRestored').addEventListener('click', () => {
+  const text = $('#restoredOutput').value;
+  if (!text) return;
+  download('restored-config.txt', text);
+});
+
+// ---- Helpers ----
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function download(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+const STAT_CONFIG = [
+  { key: 'publicIPs',    label: 'Public IPs',   color: 'var(--danger)' },
+  { key: 'privateIPs',   label: 'Private IPs',  color: 'var(--orange)' },
+  { key: 'zones',        label: 'Zones',         color: 'var(--accent)' },
+  { key: 'objectNames',  label: 'Objects',       color: '#6c8cff' },
+  { key: 'hashes',       label: 'Hashes',        color: '#e599c0' },
+  { key: 'keys',         label: 'Keys',          color: '#e599c0' },
+  { key: 'usernames',    label: 'Users',         color: 'var(--success)' },
+  { key: 'communities',  label: 'SNMP',          color: 'var(--warning)' },
+  { key: 'certificates', label: 'Certs',         color: '#e599c0' },
+  { key: 'bgpAS',        label: 'BGP AS',        color: '#b197fc' },
+  { key: 'hostnames',    label: 'Hostnames',     color: '#66d9e8' },
+  { key: 'domains',      label: 'Domains',       color: '#66d9e8' },
+  { key: 'sysHostnames', label: 'Device Name',   color: 'var(--orange)' },
+  { key: 'descriptions', label: 'Descriptions',  color: 'var(--text-dim)' },
+];
+
+const VENDOR_LABELS = {
+  asa: 'Cisco ASA/FTD',
+  fortigate: 'FortiGate',
+  panos: 'Palo Alto PAN-OS',
+  srx: 'Juniper SRX',
+  unknown: 'Unknown Vendor',
+};
+
+function renderStats(stats, vendor) {
+  const bar = $('#statsBar');
+  let html = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${VENDOR_LABELS[vendor] || vendor} <span class="count">${stats.total} total</span></div>`;
+  for (const cfg of STAT_CONFIG) {
+    const count = stats[cfg.key];
+    if (count > 0) {
+      html += `<div class="stat"><span class="dot" style="background:${cfg.color}"></span> ${cfg.label} <span class="count">${count}</span></div>`;
+    }
+  }
+  bar.innerHTML = html;
+}
+
+const TYPE_LABELS = {
+  hash: 'Hash', key: 'Key', community: 'SNMP', username: 'User',
+  public_ip: 'Public IP', private_ip: 'Private IP', certificate: 'Cert',
+  hostname: 'Hostname', bgp: 'BGP AS', zone: 'Zone', object_name: 'Object',
+  description: 'Desc', domain: 'Domain', sys_hostname: 'Device',
+};
+
+function maskValue(entry) {
+  if (entry.type === 'certificate') return '[KEY MATERIAL]';
+  if (entry.type === 'description') {
+    const text = entry.original;
+    return text.length > 60 ? text.substring(0, 60) + '...' : text;
+  }
+  // Show full value for IPs, zones, objects, hostnames
+  if (['public_ip', 'private_ip', 'zone', 'object_name', 'hostname', 'domain', 'sys_hostname', 'bgp', 'username'].includes(entry.type)) {
+    return entry.original;
+  }
+  // Mask secrets: show first 3 chars
+  if (entry.original.length <= 4) return '****';
+  return entry.original.substring(0, 3) + '****';
+}
+
+function renderMappingTable(replacements) {
+  const body = $('#mappingBody');
+  body.innerHTML = replacements.map(entry => `
+    <tr>
+      <td><span class="type-badge ${entry.type}">${TYPE_LABELS[entry.type] || entry.type}</span></td>
+      <td>${escapeHtml(entry.placeholder)}</td>
+      <td>${escapeHtml(maskValue(entry))}</td>
+    </tr>
+  `).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>
