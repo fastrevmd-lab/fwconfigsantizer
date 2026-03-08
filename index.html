@@ -333,6 +333,7 @@ tr:hover td { background: var(--surface); }
 .type-badge.sys_hostname { background: #ff922b33; color: var(--orange); }
 .type-badge.custom_word  { background: #f06595aa; color: #f06595; }
 .type-badge.url          { background: #22b8cf33; color: #66d9e8; }
+.type-badge.interface_name { background: #845ef733; color: #b197fc; }
 
 /* Restore panel */
 .restore-section {
@@ -962,6 +963,7 @@ html.light .warnings-panel {
   <div class="header-right">
     <div class="tabs">
       <button class="tab active" data-tab="sanitize">Sanitize</button>
+      <button class="tab" data-tab="batch">Batch</button>
       <button class="tab" data-tab="restore">Restore</button>
     </div>
     <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">&#9790;</button>
@@ -998,6 +1000,7 @@ html.light .warnings-panel {
         <label class="opt-check"><input type="checkbox" data-opt="descriptions" checked> Descriptions</label>
         <label class="opt-check"><input type="checkbox" data-opt="sysHostname" checked> Device Name</label>
         <label class="opt-check"><input type="checkbox" data-opt="urls" checked> URLs</label>
+        <label class="opt-check"><input type="checkbox" data-opt="interfaceNames"> Interfaces</label>
       </div>
       <div class="options-bar advanced-bar" style="gap:12px">
         <span class="options-label">Advanced:</span>
@@ -1022,6 +1025,10 @@ html.light .warnings-panel {
         <label class="opt-check" style="gap:6px;flex:1" title="Comma-separated words to redact (e.g. company name, city codes, project names)">
           Custom words <input type="text" id="customWordsInput" placeholder="ACME, NYC-DC, ProjectX" style="flex:1;min-width:200px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">
         </label>
+        <div style="display:flex;gap:6px;margin-left:auto">
+          <button class="btn" id="savePresetBtn" style="font-size:11px;padding:4px 10px">Save Preset</button>
+          <button class="btn" id="resetPresetBtn" style="font-size:11px;padding:4px 10px">Reset Defaults</button>
+        </div>
       </div>
       <textarea id="configInput" placeholder="Paste your firewall configuration here, drag &amp; drop a file, or upload above.&#10;&#10;Supported: Cisco ASA/FTD, FortiGate, Palo Alto PAN-OS, Juniper SRX"></textarea>
       <div class="config-meta" id="configMeta"></div>
@@ -1107,6 +1114,10 @@ html.light .warnings-panel {
             <span class="info-label">Custom Words</span>
             <span class="info-desc">User-defined sensitive words (company names, city codes, project names) redacted globally</span>
           </div>
+          <div class="info-item">
+            <span class="info-label">Interface Names (opt-in)</span>
+            <span class="info-desc">Custom interface names like WAN-MPLS-NYC replaced with intf-N; structural names (port1, ge-0/0/0) preserved</span>
+          </div>
         </div>
       </div>
 
@@ -1146,7 +1157,10 @@ html.light .warnings-panel {
       <div class="output-section">
         <div class="output-header">
           <h2>Sanitization Mapping</h2>
-          <span class="filename" id="mappingCount"></span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="filename" id="mappingCount"></span>
+            <button class="btn" id="copyCsvBtn" style="font-size:11px;padding:4px 10px">Copy as CSV</button>
+          </div>
         </div>
         <div class="mapping-table-wrap">
           <table>
@@ -1160,6 +1174,28 @@ html.light .warnings-panel {
             <tbody id="mappingBody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ BATCH PANEL ============ -->
+  <div id="batchPanel" class="panel">
+    <div class="input-section">
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:8px">Drop or select multiple config files to sanitize them all with the same options and salt. Downloads a zip with all sanitized files and a combined mapping.</p>
+      <div class="drop-zone" id="batchDropZone">
+        <p class="big">Drop config files here</p>
+        <p>or click to select files</p>
+        <input type="file" id="batchFileInput" multiple accept=".txt,.conf,.cfg,.xml,.log,.bak" style="display:none">
+      </div>
+      <div id="batchFileList" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div class="options-bar" id="batchOptions">
+        <span class="options-label">Options:</span>
+        <span style="font-size:12px;color:var(--text-dim)">Uses same sanitization checkboxes and salt from the Sanitize tab</span>
+      </div>
+      <button class="btn-primary btn" id="batchSanitizeBtn" disabled>Sanitize All Files</button>
+      <div id="batchResults" class="hidden">
+        <div class="stats-bar" id="batchStatsBar"></div>
+        <button class="btn-success btn" id="batchDownloadBtn">Download Zip</button>
       </div>
     </div>
   </div>
@@ -1384,7 +1420,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     publicIps: true, privateIps: true, ipv6: true, zones: true,
     objectNames: true, credentials: true, usernames: true, snmp: true,
     certificates: true, bgp: true, hostnames: true, domains: true,
-    emails: true, descriptions: true, sysHostname: true, urls: true,
+    emails: true, descriptions: true, sysHostname: true, urls: true, interfaceNames: false,
     ...options,
   };
 
@@ -1396,7 +1432,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     hash: 0, key: 0, user: 0, publicIp: 0, privateIp: 0, ipv6: 0,
     community: 0, cert: 0, host: 0, bgp: 0, zone: 0,
     objName: 0, description: 0, domain: 0, sysHostname: 0, email: 0,
-    customWord: 0, url: 0,
+    customWord: 0, url: 0, interfaceName: 0,
   };
 
   let sanitized = configText;
@@ -2276,6 +2312,59 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.urls
 
   // -----------------------------------------------------------------------
+  // 17. INTERFACE NAMES (opt-in — off by default)
+  // -----------------------------------------------------------------------
+  if (opts.interfaceNames) {
+
+  const intfMap = new Map();
+  // Structural interface names to skip (vendor defaults)
+  const structuralIntf = /^(port\d|wan\d?|lan\d?|dmz\d?|mgmt\d?|lo\d?|loopback\d*|vlan\d+|ge-\d|xe-\d|et-\d|ae\d|st\d|irb\d|fxp\d|em\d|me\d|GigabitEthernet\d|FastEthernet\d|TenGigabitEthernet\d|Ethernet\d|Management\d|Loopback\d|Tunnel\d|Vlan\d|BVI\d|null\d|any|self)$/i;
+
+  function intfReplace(name) {
+    if (!name || structuralIntf.test(name)) return name;
+    if (name.startsWith('intf-') || name.startsWith('REDACTED_') || name.startsWith('zone-') || name.startsWith('obj-')) return name;
+    let placeholder = intfMap.get(name);
+    if (!placeholder) {
+      placeholder = `intf-${counter.interfaceName++}`;
+      intfMap.set(name, placeholder);
+      addReplacement('interface_name', placeholder, name);
+    }
+    return placeholder;
+  }
+
+  // FortiGate: set interface "WAN-MPLS" or set srcintf/dstintf
+  sanitized = sanitized.replace(
+    /(set\s+(?:device|interface|srcintf|dstintf|associated-interface)\s+)"([^"]+)"/gi,
+    (match, prefix, name) => {
+      if (structuralIntf.test(name)) return match;
+      return `${prefix}"${intfReplace(name)}"`;
+    }
+  );
+
+  // ASA: nameif already handled by zones, but interface descriptions like "WAN-MPLS"
+  // SRX: set interfaces <name> unit
+  sanitized = sanitized.replace(
+    /(set\s+interfaces\s+)([a-zA-Z][\w-]*[A-Z][\w-]*)(\s)/gi,
+    (match, prefix, name, suffix) => {
+      if (structuralIntf.test(name)) return match;
+      // Only replace names with uppercase letters (likely custom names)
+      if (!/[A-Z].*[a-z]|[a-z].*[A-Z]/.test(name)) return match;
+      return `${prefix}${intfReplace(name)}${suffix}`;
+    }
+  );
+
+  // PAN-OS: <interface><entry name="WAN-MPLS">
+  sanitized = sanitized.replace(
+    /(<interface>\s*<entry\s+name=")([^"]+)(")/gi,
+    (match, prefix, name, suffix) => {
+      if (structuralIntf.test(name)) return match;
+      return `${prefix}${intfReplace(name)}${suffix}`;
+    }
+  );
+
+  } // end opts.interfaceNames
+
+  // -----------------------------------------------------------------------
   // Build stats
   // -----------------------------------------------------------------------
 
@@ -2302,6 +2391,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       sysHostnames: counter.sysHostname,
       customWords: counter.customWord,
       urls: counter.url,
+      interfaceNames: counter.interfaceName,
       total: replacements.length,
     },
   };
@@ -2387,9 +2477,50 @@ function validateSanitized(sanitizedText, opts) {
 
     // Check for patterns that look like passwords/secrets that were missed
     if (opts.credentials) {
-      // Unredacted $hash$ patterns
       if (/\$\d\$[^\s"]+/.test(line) && !line.includes('REDACTED_')) {
         warnings.push({ severity: 'high', message: 'Possible unsanitized password hash', line: lineNum, snippet: line.trim().substring(0, 120) });
+      }
+    }
+
+    // Check for remaining URLs with non-example domains
+    if (opts.urls) {
+      const urlMatches = line.matchAll(/(?:https?|ldaps?|ftp):\/\/([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gi);
+      for (const m of urlMatches) {
+        const domain = m[1];
+        if (/^example(?:-\d+)?\.net$/.test(domain)) continue;
+        if (/^host-\d+\.example\.net$/.test(domain)) continue;
+        warnings.push({ severity: 'medium', message: `Possible unsanitized URL domain: ${domain}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+      }
+    }
+
+    // Check for remaining private IPs not in our 10.x.x.x output space
+    if (opts.privateIps) {
+      const privMatches = line.matchAll(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g);
+      for (const m of privMatches) {
+        const ip = m[1];
+        if (!isValidIPv4(ip) || isSubnetMask(ip)) continue;
+        const [a, b] = ip.split('.').map(Number);
+        // Flag RFC1918 IPs that aren't in our 10.x output space
+        if (a === 172 && b >= 16 && b <= 31) {
+          warnings.push({ severity: 'medium', message: `Possible unsanitized private IP: ${ip}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+        if (a === 192 && b === 168) {
+          warnings.push({ severity: 'medium', message: `Possible unsanitized private IP: ${ip}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+      }
+    }
+
+    // Check for remaining non-documentation IPv6
+    if (opts.ipv6) {
+      if (/[0-9a-fA-F]{1,4}:(?:[0-9a-fA-F]{1,4}:){2,}/.test(line)) {
+        const v6Matches = line.matchAll(/(?<![:\w])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){2,}(?::[\da-fA-F]*)*)/g);
+        for (const m of v6Matches) {
+          const addr = m[1].toLowerCase();
+          if (addr.startsWith('2001:db8')) continue; // documentation
+          if (addr === '::1' || addr === '::') continue; // loopback/unspecified
+          if (/^fe80:/.test(addr)) continue; // link-local common in configs
+          warnings.push({ severity: 'medium', message: `Possible unsanitized IPv6: ${m[1]}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
       }
     }
   });
@@ -2519,6 +2650,21 @@ $('#copyBtn').addEventListener('click', () => {
   });
 });
 
+// Copy mapping as CSV
+$('#copyCsvBtn').addEventListener('click', () => {
+  if (!currentResult) return;
+  const csvEscape = (str) => '"' + String(str).replace(/"/g, '""') + '"';
+  const header = 'Type,Placeholder,Original';
+  const rows = currentResult.replacements.map(e =>
+    [csvEscape(TYPE_LABELS[e.type] || e.type), csvEscape(e.placeholder), csvEscape(maskValue(e))].join(',')
+  );
+  navigator.clipboard.writeText(header + '\n' + rows.join('\n')).then(() => {
+    const btn = $('#copyCsvBtn');
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = 'Copy as CSV'; }, 1500);
+  });
+});
+
 // Download sanitized config
 $('#dlSanitized').addEventListener('click', () => {
   if (!currentResult) return;
@@ -2635,6 +2781,7 @@ const STAT_CONFIG = [
   { key: 'descriptions', label: 'Descriptions',  color: 'var(--text-dim)' },
   { key: 'customWords',  label: 'Custom Words',  color: '#f06595' },
   { key: 'urls',         label: 'URLs',           color: '#66d9e8' },
+  { key: 'interfaceNames', label: 'Interfaces',  color: '#b197fc' },
 ];
 
 const VENDOR_LABELS = {
@@ -2663,7 +2810,7 @@ const TYPE_LABELS = {
   certificate: 'Cert', hostname: 'Hostname', bgp: 'BGP AS', zone: 'Zone',
   object_name: 'Object', description: 'Desc', domain: 'Domain',
   email: 'Email', sys_hostname: 'Device',
-  custom_word: 'Custom', url: 'URL',
+  custom_word: 'Custom', url: 'URL', interface_name: 'Intf',
 };
 
 function maskValue(entry) {
@@ -2673,7 +2820,7 @@ function maskValue(entry) {
     return text.length > 60 ? text.substring(0, 60) + '...' : text;
   }
   // Show full value for IPs, zones, objects, hostnames, emails
-  if (['public_ip', 'private_ip', 'ipv6', 'zone', 'object_name', 'hostname', 'domain', 'sys_hostname', 'bgp', 'username', 'email', 'custom_word', 'url'].includes(entry.type)) {
+  if (['public_ip', 'private_ip', 'ipv6', 'zone', 'object_name', 'hostname', 'domain', 'sys_hostname', 'bgp', 'username', 'email', 'custom_word', 'url', 'interface_name'].includes(entry.type)) {
     return entry.original;
   }
   // Mask secrets: show first 3 chars
@@ -2786,6 +2933,12 @@ $('#acceptBtn').addEventListener('click', () => {
   $('#appWrap').classList.remove('app-disabled');
 });
 
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#disclaimerModal').classList.contains('hidden') && $('#acceptCheck').checked) {
+    $('#acceptBtn').click();
+  }
+});
+
 // ---- Theme toggle ----
 const themeToggle = $('#themeToggle');
 const storedTheme = localStorage.getItem('theme');
@@ -2799,6 +2952,42 @@ themeToggle.addEventListener('click', () => {
   themeToggle.innerHTML = isLight ? '&#9788;' : '&#9790;';
   localStorage.setItem('theme', isLight ? 'light' : 'dark');
 });
+
+// ---- Options preset (save/load/reset) ----
+$('#savePresetBtn').addEventListener('click', () => {
+  const preset = {};
+  $$('.opt-check input[data-opt]').forEach(cb => { preset[cb.dataset.opt] = cb.checked; });
+  preset._salt = $('#saltInput').value;
+  preset._customWords = $('#customWordsInput').value;
+  localStorage.setItem('sanitizerPreset', JSON.stringify(preset));
+  const btn = $('#savePresetBtn');
+  btn.textContent = 'Saved';
+  setTimeout(() => { btn.textContent = 'Save Preset'; }, 1500);
+});
+
+$('#resetPresetBtn').addEventListener('click', () => {
+  localStorage.removeItem('sanitizerPreset');
+  $$('.opt-check input[data-opt]').forEach(cb => { cb.checked = true; });
+  $('#saltInput').value = '';
+  $('#customWordsInput').value = '';
+  const btn = $('#resetPresetBtn');
+  btn.textContent = 'Reset';
+  setTimeout(() => { btn.textContent = 'Reset Defaults'; }, 1500);
+});
+
+// Auto-load preset on startup
+(function loadPreset() {
+  const raw = localStorage.getItem('sanitizerPreset');
+  if (!raw) return;
+  try {
+    const preset = JSON.parse(raw);
+    $$('.opt-check input[data-opt]').forEach(cb => {
+      if (preset[cb.dataset.opt] !== undefined) cb.checked = preset[cb.dataset.opt];
+    });
+    if (preset._salt) $('#saltInput').value = preset._salt;
+    if (preset._customWords) $('#customWordsInput').value = preset._customWords;
+  } catch (_) {}
+})();
 
 // ---- Drag-and-drop on config textarea ----
 const configInput = $('#configInput');
@@ -2829,6 +3018,202 @@ configInput.addEventListener('drop', (e) => {
     updateConfigMeta(ev.target.result);
   };
   reader.readAsText(file);
+});
+
+// ---- Minimal ZIP writer (no external deps) ----
+function createZip(files) {
+  // files: [{name: string, content: string}]
+  const te = new TextEncoder();
+  const entries = files.map(f => ({ name: te.encode(f.name), data: te.encode(f.content) }));
+  const parts = [];
+  const centralDir = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    // CRC-32 (table-based)
+    const crc = crc32(entry.data);
+    // Local file header
+    const lh = new Uint8Array(30 + entry.name.length);
+    const lv = new DataView(lh.buffer);
+    lv.setUint32(0, 0x04034b50, true);  // signature
+    lv.setUint16(4, 20, true);           // version needed
+    lv.setUint16(6, 0, true);            // flags
+    lv.setUint16(8, 0, true);            // compression (store)
+    lv.setUint16(10, 0, true);           // mod time
+    lv.setUint16(12, 0, true);           // mod date
+    lv.setUint32(14, crc, true);         // crc32
+    lv.setUint32(18, entry.data.length, true); // compressed size
+    lv.setUint32(22, entry.data.length, true); // uncompressed size
+    lv.setUint16(26, entry.name.length, true); // filename length
+    lh.set(entry.name, 30);
+
+    // Central directory entry
+    const cd = new Uint8Array(46 + entry.name.length);
+    const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true);  // signature
+    cv.setUint16(4, 20, true);           // version made by
+    cv.setUint16(6, 20, true);           // version needed
+    cv.setUint16(8, 0, true);            // flags
+    cv.setUint16(10, 0, true);           // compression
+    cv.setUint16(12, 0, true);           // mod time
+    cv.setUint16(14, 0, true);           // mod date
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, entry.data.length, true);
+    cv.setUint32(24, entry.data.length, true);
+    cv.setUint16(28, entry.name.length, true);
+    cv.setUint32(42, offset, true);      // local header offset
+    cd.set(entry.name, 46);
+    centralDir.push(cd);
+
+    parts.push(lh, entry.data);
+    offset += lh.length + entry.data.length;
+  }
+
+  const cdOffset = offset;
+  let cdSize = 0;
+  for (const cd of centralDir) { parts.push(cd); cdSize += cd.length; }
+
+  // End of central directory
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, entries.length, true);
+  ev.setUint16(10, entries.length, true);
+  ev.setUint32(12, cdSize, true);
+  ev.setUint32(16, cdOffset, true);
+  parts.push(eocd);
+
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const result = new Uint8Array(total);
+  let pos = 0;
+  for (const p of parts) { result.set(p, pos); pos += p.length; }
+  return result;
+}
+
+function crc32(data) {
+  if (!crc32.table) {
+    crc32.table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      crc32.table[i] = c;
+    }
+  }
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) crc = crc32.table[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ---- Batch mode ----
+let batchFiles = [];
+let batchResults = [];
+
+$('#batchDropZone').addEventListener('click', () => $('#batchFileInput').click());
+$('#batchDropZone').addEventListener('dragover', (e) => {
+  e.preventDefault();
+  $('#batchDropZone').classList.add('dragover');
+});
+$('#batchDropZone').addEventListener('dragleave', () => {
+  $('#batchDropZone').classList.remove('dragover');
+});
+$('#batchDropZone').addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('#batchDropZone').classList.remove('dragover');
+  addBatchFiles(e.dataTransfer.files);
+});
+$('#batchFileInput').addEventListener('change', (e) => {
+  addBatchFiles(e.target.files);
+  e.target.value = '';
+});
+
+function addBatchFiles(fileList) {
+  for (const file of fileList) {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      batchFiles.push({ name: file.name, content: ev.target.result, size: file.size });
+      renderBatchFileList();
+    };
+    reader.readAsText(file);
+  }
+}
+
+function renderBatchFileList() {
+  const list = $('#batchFileList');
+  list.innerHTML = batchFiles.map((f, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
+      <strong style="flex:1">${escapeHtml(f.name)}</strong>
+      <span style="color:var(--text-dim)">${formatSize(f.size)}</span>
+      <button class="btn" style="font-size:11px;padding:2px 8px" onclick="removeBatchFile(${i})">Remove</button>
+    </div>
+  `).join('');
+  $('#batchSanitizeBtn').disabled = batchFiles.length === 0;
+  $('#batchResults').classList.add('hidden');
+}
+
+function removeBatchFile(idx) {
+  batchFiles.splice(idx, 1);
+  renderBatchFileList();
+}
+
+$('#batchSanitizeBtn').addEventListener('click', () => {
+  if (batchFiles.length === 0) return;
+
+  // Read options from Sanitize tab checkboxes
+  const options = {};
+  $$('.opt-check input[data-opt]').forEach(cb => { options[cb.dataset.opt] = cb.checked; });
+  const salt = $('#saltInput').value.trim();
+  const customWordsRaw = $('#customWordsInput').value.trim();
+  const customWords = customWordsRaw ? customWordsRaw.split(',').map(w => w.trim()).filter(Boolean) : [];
+  // Force a salt for batch mode so all files use the same mapping
+  const batchSalt = salt || 'batch-' + Date.now().toString(36);
+
+  batchResults = [];
+  let totalReplacements = 0;
+
+  for (const file of batchFiles) {
+    const result = sanitizeConfig(file.content, options, batchSalt, customWords);
+    batchResults.push({ name: file.name, result });
+    totalReplacements += result.replacements.length;
+  }
+
+  $('#batchStatsBar').innerHTML = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${batchFiles.length} files <span class="count">${totalReplacements} total replacements</span></div>`;
+  $('#batchResults').classList.remove('hidden');
+});
+
+$('#batchDownloadBtn').addEventListener('click', () => {
+  if (batchResults.length === 0) return;
+
+  const zipFiles = [];
+  const allMappings = [];
+
+  for (const { name, result } of batchResults) {
+    const baseName = name.replace(/\.[^.]+$/, '');
+    const ext = name.split('.').pop();
+    zipFiles.push({ name: `${baseName}.sanitized.${ext}`, content: result.sanitizedText });
+    allMappings.push(...result.replacements.map(r => ({ ...r, sourceFile: name })));
+  }
+
+  const mappingData = {
+    metadata: {
+      timestamp: new Date().toISOString(),
+      fileCount: batchResults.length,
+      files: batchResults.map(r => r.name),
+      salt: $('#saltInput').value.trim() || '(auto-generated for batch)',
+    },
+    mappings: allMappings,
+  };
+  zipFiles.push({ name: 'combined.mapping.json', content: JSON.stringify(mappingData, null, 2) });
+
+  const zipData = createZip(zipFiles);
+  const blob = new Blob([zipData], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'sanitized-configs.zip';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 });
 </script>
 </body>

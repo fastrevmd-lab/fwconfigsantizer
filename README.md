@@ -15,6 +15,8 @@ A portable, browser-based tool that sanitizes firewall configurations by replaci
 9. Use the **Diff** view to compare original vs sanitized side-by-side
 10. Download the **sanitized config** (safe to share) and the **mapping file** (to restore later)
 
+For multiple files, use the **Batch** tab to sanitize several configs at once and download a zip.
+
 ## What Gets Sanitized
 
 Each category can be individually enabled or disabled via checkboxes before sanitizing.
@@ -37,6 +39,7 @@ Each category can be individually enabled or disabled via checkboxes before sani
 | Domain names (FQDNs) | `example-N.net` |
 | Email addresses | `user-N@example.net` |
 | URLs | Domain replaced with `example-N.net`, path preserved |
+| Interface names (opt-in) | `intf-0`, `intf-1`, ... (structural names like port1, ge-0/0/0 preserved) |
 | Descriptions & comments | `(sanitized)` |
 | Custom words | `REDACTED_WORD_N` |
 
@@ -47,13 +50,18 @@ CIDR prefix lengths (e.g. `/24`, `/32`) are preserved alongside their replaced I
 - **Prefix-preserving IP anonymization** — IPs sharing a subnet stay in the same subnet after anonymization (e.g. two hosts on the same /24 remain on the same /24)
 - **Deterministic salt** — provide an optional salt so the same config always produces the same output; enables processing HA pairs separately with compatible results
 - **Custom sensitive word list** — add comma-separated org-specific terms (company name, city codes, project names) to redact globally
+- **Batch mode** — sanitize multiple config files at once with the same salt and options; downloads a zip with all sanitized files and a combined mapping
+- **Interface name sanitization** — opt-in category to replace topology-leaking interface names (WAN-MPLS-NYC) while preserving structural ones (port1, ge-0/0/0)
 - **Drag-and-drop upload** — drop a config file directly onto the text area
 - **URL sanitization** — HTTP/HTTPS/LDAP/FTP URLs have their domain replaced while preserving path and port
 - **Selective sanitization** — toggle each category on/off via checkboxes
+- **Save/load presets** — save your checkbox settings, salt, and custom words to localStorage for reuse
 - **Diff view** — side-by-side comparison of original vs sanitized config with changed lines highlighted
-- **Validation warnings** — post-sanitize scan flags potential missed items (unsanitized IPs, emails, FQDNs, password hashes)
+- **Validation warnings** — post-sanitize scan flags potential missed items (IPs, emails, FQDNs, URLs, password hashes, IPv6)
+- **Copy mapping as CSV** — export the mapping table in spreadsheet-friendly format
 - **Config size indicator** — shows line/size count, warns if config appears incomplete
 - **Light/dark mode** — toggle in the upper right, preference persisted
+- **Mobile responsive** — works on tablets and phones
 - **Restore** — upload a sanitized config + mapping file to reconstruct the original
 
 ## Supported Vendors
