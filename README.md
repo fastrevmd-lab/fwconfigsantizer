@@ -7,15 +7,19 @@ A portable, browser-based tool that sanitizes firewall configurations by replaci
 1. Download `index.html`
 2. Open it in any modern browser
 3. Paste or upload a firewall config
-4. Click **Sanitize**
-5. Download the **sanitized config** (safe to share) and the **mapping file** (to restore later)
+4. Toggle sanitization categories on/off as needed
+5. Click **Sanitize**
+6. Download the **sanitized config** (safe to share) and the **mapping file** (to restore later)
 
 ## What Gets Sanitized
+
+Each category can be individually enabled or disabled via checkboxes before sanitizing.
 
 | Category | Replacement |
 |----------|-------------|
 | Public IPs | RFC 5737 documentation IPs (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`) |
 | Private IPs | Synthetic `10.0.x.x` addresses |
+| IPv6 addresses | RFC 3849 documentation prefix (`2001:db8::`) |
 | Zone names | `zone-0`, `zone-1`, ... |
 | Object / group names | `obj-0`, `obj-1`, ... |
 | Passwords & hashes | `REDACTED_HASH_N` |
@@ -27,6 +31,7 @@ A portable, browser-based tool that sanitizes firewall configurations by replaci
 | Server hostnames | `host-N.example.net` |
 | Device hostname | `sanitized-fw` |
 | Domain names (FQDNs) | `example-N.net` |
+| Email addresses | `user-N@example.net` |
 | Descriptions & comments | `(sanitized)` |
 
 ## Supported Vendors

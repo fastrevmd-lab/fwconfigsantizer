@@ -328,6 +328,8 @@ tr:hover td { background: var(--surface); }
 .type-badge.object_name  { background: #6c8cff33; color: var(--accent); }
 .type-badge.description  { background: #86868633; color: var(--text-dim); }
 .type-badge.domain       { background: #22b8cf33; color: #66d9e8; }
+.type-badge.ipv6         { background: #ff6b6b33; color: var(--danger); }
+.type-badge.email        { background: #20c99733; color: #20c997; }
 .type-badge.sys_hostname { background: #ff922b33; color: var(--orange); }
 
 /* Restore panel */
@@ -494,6 +496,42 @@ tr:hover td { background: var(--surface); }
   gap: 12px;
 }
 
+/* Sanitization options */
+.options-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  align-items: center;
+}
+
+.options-bar .options-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 4px;
+}
+
+.opt-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.opt-check input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .hidden { display: none !important; }
 </style>
 </head>
@@ -525,6 +563,24 @@ tr:hover td { background: var(--surface); }
         <button class="btn-primary btn" id="sanitizeBtn" disabled>Sanitize</button>
         <button class="btn btn-danger hidden" id="clearBtn">Clear</button>
       </div>
+      <div class="options-bar">
+        <span class="options-label">Sanitize:</span>
+        <label class="opt-check"><input type="checkbox" data-opt="publicIps" checked> Public IPs</label>
+        <label class="opt-check"><input type="checkbox" data-opt="privateIps" checked> Private IPs</label>
+        <label class="opt-check"><input type="checkbox" data-opt="ipv6" checked> IPv6</label>
+        <label class="opt-check"><input type="checkbox" data-opt="zones" checked> Zones</label>
+        <label class="opt-check"><input type="checkbox" data-opt="objectNames" checked> Objects</label>
+        <label class="opt-check"><input type="checkbox" data-opt="credentials" checked> Credentials</label>
+        <label class="opt-check"><input type="checkbox" data-opt="usernames" checked> Usernames</label>
+        <label class="opt-check"><input type="checkbox" data-opt="snmp" checked> SNMP</label>
+        <label class="opt-check"><input type="checkbox" data-opt="certificates" checked> Certificates</label>
+        <label class="opt-check"><input type="checkbox" data-opt="bgp" checked> BGP AS</label>
+        <label class="opt-check"><input type="checkbox" data-opt="hostnames" checked> Hostnames</label>
+        <label class="opt-check"><input type="checkbox" data-opt="domains" checked> Domains</label>
+        <label class="opt-check"><input type="checkbox" data-opt="emails" checked> Emails</label>
+        <label class="opt-check"><input type="checkbox" data-opt="descriptions" checked> Descriptions</label>
+        <label class="opt-check"><input type="checkbox" data-opt="sysHostname" checked> Device Name</label>
+      </div>
       <textarea id="configInput" placeholder="Paste your firewall configuration here, or upload a file above.&#10;&#10;Supported: Cisco ASA/FTD, FortiGate, Palo Alto PAN-OS, Juniper SRX"></textarea>
     </div>
 
@@ -551,6 +607,10 @@ tr:hover td { background: var(--surface); }
           <div class="info-item">
             <span class="info-label">Private IPs</span>
             <span class="info-desc">RFC 1918 addresses obfuscated with synthetic 10.0.x.x addresses. Subnet masks are preserved.</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">IPv6 Addresses</span>
+            <span class="info-desc">Full and compressed IPv6 addresses replaced with documentation prefix (2001:db8::) variants</span>
           </div>
           <div class="info-item">
             <span class="info-label">Zone Names</span>
@@ -587,6 +647,10 @@ tr:hover td { background: var(--surface); }
           <div class="info-item">
             <span class="info-label">Hostnames &amp; FQDNs</span>
             <span class="info-desc">Device hostname, DNS/NTP/RADIUS/syslog server FQDNs, and domain names</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Email Addresses</span>
+            <span class="info-desc">Email addresses in LDAP configs, comments, and contact fields replaced with user-N@example.net</span>
           </div>
           <div class="info-item">
             <span class="info-label">Descriptions &amp; Comments</span>
@@ -779,20 +843,53 @@ function synthPrivateIP(idx) {
 }
 
 /**
+ * Generate a synthetic documentation IPv6 address for a given index.
+ * Uses RFC 3849 documentation prefix 2001:db8::/32.
+ * @param {number} idx
+ * @returns {string}
+ */
+function synthIPv6(idx) {
+  const num = idx + 1; // start at 1
+  const group3 = (num >> 16) & 0xffff;
+  const group4 = num & 0xffff;
+  if (group3 === 0) return `2001:db8::${group4.toString(16)}`;
+  return `2001:db8::${group3.toString(16)}:${group4.toString(16)}`;
+}
+
+/**
+ * Check if an IPv6 address is already a documentation address (2001:db8::/32).
+ * @param {string} ipv6
+ * @returns {boolean}
+ */
+function isDocIPv6(ipv6) {
+  return ipv6.toLowerCase().startsWith('2001:db8');
+}
+
+/**
  * Sanitize a firewall configuration, replacing all identifiable information.
  * @param {string} configText - Raw firewall config
+ * @param {object} [options] - Toggle individual sanitization categories
  * @returns {{ sanitizedText: string, replacements: Array, stats: object, vendor: string }}
  */
-function sanitizeConfig(configText) {
+function sanitizeConfig(configText, options = {}) {
   if (!configText || typeof configText !== 'string') {
     throw new Error('configText is required and must be a string');
   }
 
+  // Default all options to true
+  const opts = {
+    publicIps: true, privateIps: true, ipv6: true, zones: true,
+    objectNames: true, credentials: true, usernames: true, snmp: true,
+    certificates: true, bgp: true, hostnames: true, domains: true,
+    emails: true, descriptions: true, sysHostname: true,
+    ...options,
+  };
+
   const replacements = [];
   const counter = {
-    hash: 0, key: 0, user: 0, publicIp: 0, privateIp: 0,
+    hash: 0, key: 0, user: 0, publicIp: 0, privateIp: 0, ipv6: 0,
     community: 0, cert: 0, host: 0, bgp: 0, zone: 0,
-    objName: 0, description: 0, domain: 0, sysHostname: 0,
+    objName: 0, description: 0, domain: 0, sysHostname: 0, email: 0,
   };
 
   let sanitized = configText;
@@ -801,11 +898,13 @@ function sanitizeConfig(configText) {
   // De-duplication maps: same original value -> same placeholder
   const publicIpMap = new Map();
   const privateIpMap = new Map();
+  const ipv6Map = new Map();
   const zoneMap = new Map();
   const objNameMap = new Map();
   const domainMap = new Map();
   const usernameMap = new Map();
   const hostnameMap = new Map();
+  const emailMap = new Map();
 
   // Helper: register a replacement and return the placeholder
   function addReplacement(type, placeholder, original) {
@@ -816,6 +915,7 @@ function sanitizeConfig(configText) {
   // -----------------------------------------------------------------------
   // 1. PASSWORD HASHES
   // -----------------------------------------------------------------------
+  if (opts.credentials) {
 
   // XML tag hashes: <phash>, <password-hash>, <encrypted-secret>
   sanitized = sanitized.replace(
@@ -862,6 +962,7 @@ function sanitizeConfig(configText) {
   // -----------------------------------------------------------------------
   // 2. PRE-SHARED KEYS, API KEYS, SECRETS
   // -----------------------------------------------------------------------
+  // (still inside opts.credentials guard)
 
   // Nested XML keys: <pre-shared-key><key>VALUE</key></pre-shared-key>
   sanitized = sanitized.replace(
@@ -928,9 +1029,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.credentials
+
   // -----------------------------------------------------------------------
   // 3. SNMP COMMUNITIES
   // -----------------------------------------------------------------------
+  if (opts.snmp) {
 
   // XML
   sanitized = sanitized.replace(
@@ -965,9 +1069,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.snmp
+
   // -----------------------------------------------------------------------
   // 4. USERNAMES
   // -----------------------------------------------------------------------
+  if (opts.usernames) {
 
   // XML auth context tags
   sanitized = sanitized.replace(
@@ -1045,9 +1152,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.usernames
+
   // -----------------------------------------------------------------------
   // 5. CERTIFICATE PRIVATE KEYS
   // -----------------------------------------------------------------------
+  if (opts.certificates) {
 
   // PEM blocks
   sanitized = sanitized.replace(
@@ -1070,9 +1180,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.certificates
+
   // -----------------------------------------------------------------------
   // 6. SYSTEM HOSTNAME
   // -----------------------------------------------------------------------
+  if (opts.sysHostname) {
 
   // ASA: hostname DEVICE_NAME
   sanitized = sanitized.replace(
@@ -1146,9 +1259,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.sysHostname
+
   // -----------------------------------------------------------------------
   // 7. SERVER HOSTNAMES / FQDNs
   // -----------------------------------------------------------------------
+  if (opts.hostnames) {
 
   // XML tags for servers
   sanitized = sanitized.replace(
@@ -1199,9 +1315,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.hostnames
+
   // -----------------------------------------------------------------------
   // 8. BGP AS NUMBERS
   // -----------------------------------------------------------------------
+  if (opts.bgp) {
 
   // XML
   sanitized = sanitized.replace(
@@ -1224,9 +1343,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.bgp
+
   // -----------------------------------------------------------------------
   // 9. DESCRIPTIONS, COMMENTS, REMARKS
   // -----------------------------------------------------------------------
+  if (opts.descriptions) {
 
   // ASA: description <text> / remark <text>
   sanitized = sanitized.replace(
@@ -1283,9 +1405,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.descriptions
+
   // -----------------------------------------------------------------------
   // 10. DOMAIN NAMES (FQDNs that aren't server hostnames)
   // -----------------------------------------------------------------------
+  if (opts.domains) {
 
   // FortiGate: set fqdn "domain.com"
   sanitized = sanitized.replace(
@@ -1348,9 +1473,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.domains
+
   // -----------------------------------------------------------------------
   // 11. ZONE NAMES
   // -----------------------------------------------------------------------
+  if (opts.zones) {
 
   // Helper to get or create zone placeholder
   function zoneReplace(original) {
@@ -1421,9 +1549,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.zones
+
   // -----------------------------------------------------------------------
   // 12. OBJECT / GROUP NAMES (can identify org topology)
   // -----------------------------------------------------------------------
+  if (opts.objectNames) {
 
   // Helper for object name replacement
   function objReplace(original) {
@@ -1509,9 +1640,12 @@ function sanitizeConfig(configText) {
     }
   );
 
+  } // end opts.objectNames
+
   // -----------------------------------------------------------------------
-  // 13. PUBLIC IP ADDRESSES (replaced with RFC 5737 documentation IPs)
+  // 13. IPv4 ADDRESSES (public + private)
   // -----------------------------------------------------------------------
+  if (opts.publicIps || opts.privateIps) {
 
   const ipRegex = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
 
@@ -1520,6 +1654,7 @@ function sanitizeConfig(configText) {
     if (isSubnetMask(match)) return match;
 
     if (isPrivateOrReserved(match)) {
+      if (!opts.privateIps) return match;
       // Private IP -> synthetic private IP
       if (privateIpMap.has(match)) return privateIpMap.get(match);
       const idx = counter.privateIp++;
@@ -1529,6 +1664,7 @@ function sanitizeConfig(configText) {
       return placeholder;
     }
 
+    if (!opts.publicIps) return match;
     // Public IP -> documentation IP
     if (publicIpMap.has(match)) return publicIpMap.get(match);
     const idx = counter.publicIp++;
@@ -1537,6 +1673,54 @@ function sanitizeConfig(configText) {
     addReplacement('public_ip', placeholder, match);
     return placeholder;
   });
+
+  } // end opts.publicIps || opts.privateIps
+
+  // -----------------------------------------------------------------------
+  // 14. IPv6 ADDRESSES
+  // -----------------------------------------------------------------------
+  if (opts.ipv6) {
+
+  // Match IPv6 addresses: full, compressed, and with prefix length
+  // Covers: 2001:0db8:85a3::8a2e:370:7334, fe80::1%eth0, ::1, etc.
+  const ipv6Regex = /(?<![:\w])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|:(?::[0-9a-fA-F]{1,4}){1,7}|::)(?:%[a-zA-Z0-9]+)?(?=\/\d{1,3}\b|\s|$|[;,>"'\]])/gm;
+
+  sanitized = sanitized.replace(ipv6Regex, (match) => {
+    const addr = match.replace(/%[a-zA-Z0-9]+$/, ''); // strip zone ID for comparison
+    // Skip loopback ::1 and unspecified ::
+    if (addr === '::1' || addr === '::') return match;
+    // Skip documentation addresses (already sanitized)
+    if (isDocIPv6(addr)) return match;
+
+    if (ipv6Map.has(addr)) return ipv6Map.get(addr);
+    const idx = counter.ipv6++;
+    const placeholder = synthIPv6(idx);
+    ipv6Map.set(addr, placeholder);
+    addReplacement('ipv6', placeholder, match);
+    return placeholder;
+  });
+
+  } // end opts.ipv6
+
+  // -----------------------------------------------------------------------
+  // 15. EMAIL ADDRESSES
+  // -----------------------------------------------------------------------
+  if (opts.emails) {
+
+  const emailRegex = /\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
+
+  sanitized = sanitized.replace(emailRegex, (match) => {
+    // Skip already-sanitized addresses
+    if (match.endsWith('@example.net')) return match;
+    if (emailMap.has(match)) return emailMap.get(match);
+    const idx = counter.email++;
+    const placeholder = `user-${idx}@example.net`;
+    emailMap.set(match, placeholder);
+    addReplacement('email', placeholder, match);
+    return placeholder;
+  });
+
+  } // end opts.emails
 
   // -----------------------------------------------------------------------
   // Build stats
@@ -1553,6 +1737,7 @@ function sanitizeConfig(configText) {
       usernames: counter.user,
       publicIPs: counter.publicIp,
       privateIPs: counter.privateIp,
+      ipv6: counter.ipv6,
       certificates: counter.cert,
       hostnames: counter.host,
       bgpAS: counter.bgp,
@@ -1560,6 +1745,7 @@ function sanitizeConfig(configText) {
       objectNames: counter.objName,
       descriptions: counter.description,
       domains: counter.domain,
+      emails: counter.email,
       sysHostnames: counter.sysHostname,
       total: replacements.length,
     },
@@ -1644,8 +1830,14 @@ $('#sanitizeBtn').addEventListener('click', () => {
   const input = $('#configInput').value;
   if (!input.trim()) return;
 
+  // Read checkbox options
+  const options = {};
+  $$('.opt-check input[data-opt]').forEach(cb => {
+    options[cb.dataset.opt] = cb.checked;
+  });
+
   try {
-    currentResult = sanitizeConfig(input);
+    currentResult = sanitizeConfig(input, options);
   } catch (err) {
     alert('Error sanitizing config: ' + err.message);
     return;
@@ -1775,6 +1967,7 @@ function download(filename, content) {
 const STAT_CONFIG = [
   { key: 'publicIPs',    label: 'Public IPs',   color: 'var(--danger)' },
   { key: 'privateIPs',   label: 'Private IPs',  color: 'var(--orange)' },
+  { key: 'ipv6',         label: 'IPv6',          color: '#ff6b6b' },
   { key: 'zones',        label: 'Zones',         color: 'var(--accent)' },
   { key: 'objectNames',  label: 'Objects',       color: '#6c8cff' },
   { key: 'hashes',       label: 'Hashes',        color: '#e599c0' },
@@ -1785,6 +1978,7 @@ const STAT_CONFIG = [
   { key: 'bgpAS',        label: 'BGP AS',        color: '#b197fc' },
   { key: 'hostnames',    label: 'Hostnames',     color: '#66d9e8' },
   { key: 'domains',      label: 'Domains',       color: '#66d9e8' },
+  { key: 'emails',       label: 'Emails',        color: '#20c997' },
   { key: 'sysHostnames', label: 'Device Name',   color: 'var(--orange)' },
   { key: 'descriptions', label: 'Descriptions',  color: 'var(--text-dim)' },
 ];
@@ -1811,9 +2005,10 @@ function renderStats(stats, vendor) {
 
 const TYPE_LABELS = {
   hash: 'Hash', key: 'Key', community: 'SNMP', username: 'User',
-  public_ip: 'Public IP', private_ip: 'Private IP', certificate: 'Cert',
-  hostname: 'Hostname', bgp: 'BGP AS', zone: 'Zone', object_name: 'Object',
-  description: 'Desc', domain: 'Domain', sys_hostname: 'Device',
+  public_ip: 'Public IP', private_ip: 'Private IP', ipv6: 'IPv6',
+  certificate: 'Cert', hostname: 'Hostname', bgp: 'BGP AS', zone: 'Zone',
+  object_name: 'Object', description: 'Desc', domain: 'Domain',
+  email: 'Email', sys_hostname: 'Device',
 };
 
 function maskValue(entry) {
@@ -1822,8 +2017,8 @@ function maskValue(entry) {
     const text = entry.original;
     return text.length > 60 ? text.substring(0, 60) + '...' : text;
   }
-  // Show full value for IPs, zones, objects, hostnames
-  if (['public_ip', 'private_ip', 'zone', 'object_name', 'hostname', 'domain', 'sys_hostname', 'bgp', 'username'].includes(entry.type)) {
+  // Show full value for IPs, zones, objects, hostnames, emails
+  if (['public_ip', 'private_ip', 'ipv6', 'zone', 'object_name', 'hostname', 'domain', 'sys_hostname', 'bgp', 'username', 'email'].includes(entry.type)) {
     return entry.original;
   }
   // Mask secrets: show first 3 chars
