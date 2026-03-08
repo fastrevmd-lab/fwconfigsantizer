@@ -6,10 +6,13 @@ A portable, browser-based tool that sanitizes firewall configurations by replaci
 
 1. Download `index.html`
 2. Open it in any modern browser
-3. Paste or upload a firewall config
-4. Toggle sanitization categories on/off as needed
-5. Click **Sanitize**
-6. Download the **sanitized config** (safe to share) and the **mapping file** (to restore later)
+3. Accept the risk disclaimer
+4. Paste or upload a firewall config
+5. Toggle sanitization categories on/off as needed
+6. Click **Sanitize**
+7. Review the **validation warnings** for any potentially missed items
+8. Use the **Diff** view to compare original vs sanitized side-by-side
+9. Download the **sanitized config** (safe to share) and the **mapping file** (to restore later)
 
 ## What Gets Sanitized
 
@@ -33,6 +36,17 @@ Each category can be individually enabled or disabled via checkboxes before sani
 | Domain names (FQDNs) | `example-N.net` |
 | Email addresses | `user-N@example.net` |
 | Descriptions & comments | `(sanitized)` |
+
+CIDR prefix lengths (e.g. `/24`, `/32`) are preserved alongside their replaced IP addresses.
+
+## Features
+
+- **Selective sanitization** — toggle each category on/off via checkboxes
+- **Diff view** — side-by-side comparison of original vs sanitized config with changed lines highlighted
+- **Validation warnings** — post-sanitize scan flags potential missed items (unsanitized IPs, emails, FQDNs, password hashes)
+- **Config size indicator** — shows line/size count, warns if config appears incomplete
+- **Light/dark mode** — toggle in the upper right, preference persisted
+- **Restore** — upload a sanitized config + mapping file to reconstruct the original
 
 ## Supported Vendors
 

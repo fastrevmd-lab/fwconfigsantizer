@@ -496,6 +496,174 @@ tr:hover td { background: var(--surface); }
   gap: 12px;
 }
 
+/* Diff view */
+.view-toggle {
+  display: flex;
+  gap: 0;
+  margin-right: 8px;
+}
+
+.view-toggle .view-btn {
+  border-radius: 0;
+  border-right-width: 0;
+}
+
+.view-toggle .view-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.view-toggle .view-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-right-width: 1px; }
+
+.view-toggle .view-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.diff-container {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  max-height: 600px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.diff-table td {
+  padding: 0 12px;
+  border: none;
+  vertical-align: top;
+  white-space: pre;
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: normal;
+}
+
+.diff-table .diff-ln {
+  width: 50px;
+  text-align: right;
+  color: var(--text-dim);
+  opacity: 0.5;
+  user-select: none;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+}
+
+.diff-table .diff-sep {
+  width: 1px;
+  background: var(--border);
+  padding: 0;
+}
+
+.diff-table tr.diff-changed td {
+  background: rgba(255, 212, 59, 0.08);
+}
+
+.diff-table tr.diff-changed td.diff-old {
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--danger);
+}
+
+.diff-table tr.diff-changed td.diff-new {
+  background: rgba(81, 207, 102, 0.1);
+  color: var(--success);
+}
+
+.diff-table tr.diff-same td {
+  color: var(--text-dim);
+}
+
+/* Warnings panel */
+.warnings-panel {
+  margin-top: 12px;
+  border: 1px solid #5a3e00;
+  border-radius: var(--radius);
+  background: #1a1600;
+  overflow: hidden;
+}
+
+html.light .warnings-panel {
+  border-color: #e6c200;
+  background: #fffbe6;
+}
+
+.warnings-header {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.warnings-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.warning-item {
+  display: flex;
+  gap: 10px;
+  padding: 6px 16px;
+  font-size: 12px;
+  border-top: 1px solid rgba(255, 212, 59, 0.15);
+  align-items: baseline;
+}
+
+.warning-item .w-sev {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.warning-item .w-sev.high {
+  background: rgba(255, 107, 107, 0.2);
+  color: var(--danger);
+}
+
+.warning-item .w-sev.medium {
+  background: rgba(255, 212, 59, 0.2);
+  color: var(--warning);
+}
+
+.warning-item .w-line {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.warning-item .w-msg {
+  color: var(--text);
+}
+
+.warning-item .w-snippet {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
+}
+
+/* Config meta bar */
+.config-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 20px;
+}
+
+.config-meta .meta-warn {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 /* Sanitization options */
 .options-bar {
   display: flex;
@@ -669,6 +837,7 @@ tr:hover td { background: var(--surface); }
         <label class="opt-check"><input type="checkbox" data-opt="sysHostname" checked> Device Name</label>
       </div>
       <textarea id="configInput" placeholder="Paste your firewall configuration here, or upload a file above.&#10;&#10;Supported: Cisco ASA/FTD, FortiGate, Palo Alto PAN-OS, Juniper SRX"></textarea>
+      <div class="config-meta" id="configMeta"></div>
     </div>
 
     <div id="noDataMessage">
@@ -755,17 +924,28 @@ tr:hover td { background: var(--surface); }
 
     <div id="resultsArea" class="hidden">
       <div class="stats-bar" id="statsBar"></div>
+      <div class="warnings-panel hidden" id="warningsPanel">
+        <div class="warnings-header">
+          <span class="warnings-title" id="warningsTitle"></span>
+        </div>
+        <div class="warnings-list" id="warningsList"></div>
+      </div>
 
       <div class="output-section">
         <div class="output-header">
           <h2>Sanitized Configuration</h2>
           <div class="download-bar">
+            <div class="view-toggle">
+              <button class="btn view-btn active" data-view="output">Output</button>
+              <button class="btn view-btn" data-view="diff">Diff</button>
+            </div>
             <button class="btn" id="copyBtn">Copy</button>
             <button class="btn-success btn" id="dlSanitized">Download Sanitized Config</button>
             <button class="btn btn-primary" id="dlMapping">Download Mapping File</button>
           </div>
         </div>
         <textarea id="sanitizedOutput" readonly></textarea>
+        <div id="diffView" class="diff-container hidden"></div>
       </div>
 
       <div class="output-section">
@@ -1735,31 +1915,33 @@ function sanitizeConfig(configText, options = {}) {
   // -----------------------------------------------------------------------
   if (opts.publicIps || opts.privateIps) {
 
-  const ipRegex = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
+  // Match IPv4 with optional CIDR prefix length
+  const ipRegex = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(\/\d{1,2})?\b/g;
 
-  sanitized = sanitized.replace(ipRegex, (match) => {
-    if (!isValidIPv4(match)) return match;
-    if (isSubnetMask(match)) return match;
+  sanitized = sanitized.replace(ipRegex, (match, ip, cidr) => {
+    if (!isValidIPv4(ip)) return match;
+    if (isSubnetMask(ip)) return match;
+    const suffix = cidr || '';
 
-    if (isPrivateOrReserved(match)) {
+    if (isPrivateOrReserved(ip)) {
       if (!opts.privateIps) return match;
-      // Private IP -> synthetic private IP
-      if (privateIpMap.has(match)) return privateIpMap.get(match);
+      // Private IP -> synthetic private IP (dedup on IP only, preserve CIDR)
+      if (privateIpMap.has(ip)) return privateIpMap.get(ip) + suffix;
       const idx = counter.privateIp++;
       const placeholder = synthPrivateIP(idx);
-      privateIpMap.set(match, placeholder);
-      addReplacement('private_ip', placeholder, match);
-      return placeholder;
+      privateIpMap.set(ip, placeholder);
+      addReplacement('private_ip', placeholder, ip);
+      return placeholder + suffix;
     }
 
     if (!opts.publicIps) return match;
-    // Public IP -> documentation IP
-    if (publicIpMap.has(match)) return publicIpMap.get(match);
+    // Public IP -> documentation IP (dedup on IP only, preserve CIDR)
+    if (publicIpMap.has(ip)) return publicIpMap.get(ip) + suffix;
     const idx = counter.publicIp++;
     const placeholder = docIP(idx);
-    publicIpMap.set(match, placeholder);
-    addReplacement('public_ip', placeholder, match);
-    return placeholder;
+    publicIpMap.set(ip, placeholder);
+    addReplacement('public_ip', placeholder, ip);
+    return placeholder + suffix;
   });
 
   } // end opts.publicIps || opts.privateIps
@@ -1859,6 +2041,77 @@ function restoreConfig(sanitizedText, mappings) {
   return restored;
 }
 
+/**
+ * Post-sanitization validation: scan output for patterns that may have been missed.
+ * @param {string} sanitizedText
+ * @param {object} opts - the sanitization options used
+ * @returns {Array<{severity: string, message: string, line: number, snippet: string}>}
+ */
+function validateSanitized(sanitizedText, opts) {
+  const warnings = [];
+  const lines = sanitizedText.split('\n');
+
+  lines.forEach((line, idx) => {
+    const lineNum = idx + 1;
+
+    // Check for remaining non-documentation public IPs
+    if (opts.publicIps) {
+      const ipMatches = line.matchAll(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g);
+      for (const m of ipMatches) {
+        const ip = m[1];
+        if (!isValidIPv4(ip) || isSubnetMask(ip)) continue;
+        if (isPrivateOrReserved(ip)) continue;
+        // Check it's not a documentation IP
+        const [a, b, c] = ip.split('.').map(Number);
+        if (a === 192 && b === 0 && c === 2) continue;
+        if (a === 198 && b === 51 && c === 100) continue;
+        if (a === 203 && b === 0 && c === 113) continue;
+        if (a === 198 && b === 18) continue;
+        warnings.push({ severity: 'high', message: `Possible unsanitized public IP: ${ip}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+      }
+    }
+
+    // Check for remaining email addresses
+    if (opts.emails) {
+      const emailMatches = line.matchAll(/\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g);
+      for (const m of emailMatches) {
+        if (m[0].endsWith('@example.net')) continue;
+        warnings.push({ severity: 'high', message: `Possible unsanitized email: ${m[0]}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+      }
+    }
+
+    // Check for remaining FQDNs (not example.net/example-N.net)
+    if (opts.domains || opts.hostnames) {
+      const fqdnMatches = line.matchAll(/\b([a-zA-Z0-9][\w-]*\.(?:[a-zA-Z0-9][\w-]*\.)*[a-zA-Z]{2,})\b/g);
+      for (const m of fqdnMatches) {
+        const fqdn = m[1];
+        if (/^example(?:-\d+)?\.net$/.test(fqdn)) continue;
+        if (/^host-\d+\.example\.net$/.test(fqdn)) continue;
+        // Skip common generic/protocol names
+        if (/^(www|ftp|http|https|tcp|udp)\./i.test(fqdn)) continue;
+        // Only flag if it looks like a real domain (has at least 2 parts and a real TLD)
+        const parts = fqdn.split('.');
+        if (parts.length >= 2 && parts[parts.length - 1].length >= 2 && parts[parts.length - 1].length <= 6) {
+          // Skip things that are clearly not domains (version numbers like 9.16, etc.)
+          if (/^\d+\.\d+$/.test(fqdn)) continue;
+          if (/^REDACTED_|^SANITIZED_|^sanitized-/.test(fqdn)) continue;
+          warnings.push({ severity: 'medium', message: `Possible unsanitized FQDN: ${fqdn}`, line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+      }
+    }
+
+    // Check for patterns that look like passwords/secrets that were missed
+    if (opts.credentials) {
+      // Unredacted $hash$ patterns
+      if (/\$\d\$[^\s"]+/.test(line) && !line.includes('REDACTED_')) {
+        warnings.push({ severity: 'high', message: 'Possible unsanitized password hash', line: lineNum, snippet: line.trim().substring(0, 120) });
+      }
+    }
+  });
+
+  return warnings;
+}
+
 /* ===========================================================================
    UI Logic
    =========================================================================== */
@@ -1893,14 +2146,29 @@ $('#fileInput').addEventListener('change', (e) => {
     $('#configInput').value = ev.target.result;
     $('#fileLabel').innerHTML = `<strong>${file.name}</strong> (${formatSize(file.size)})`;
     $('#sanitizeBtn').disabled = false;
+    updateConfigMeta(ev.target.result);
   };
   reader.readAsText(file);
 });
 
 // Enable sanitize button on input
 $('#configInput').addEventListener('input', () => {
-  $('#sanitizeBtn').disabled = !$('#configInput').value.trim();
+  const val = $('#configInput').value;
+  $('#sanitizeBtn').disabled = !val.trim();
+  updateConfigMeta(val);
 });
+
+function updateConfigMeta(text) {
+  const meta = $('#configMeta');
+  if (!text.trim()) { meta.innerHTML = ''; return; }
+  const lines = text.split('\n').length;
+  const chars = text.length;
+  let html = `<span>${lines.toLocaleString()} lines</span><span>${formatSize(chars)}</span>`;
+  if (lines < 10) {
+    html += `<span class="meta-warn">Config appears very short -- may be incomplete</span>`;
+  }
+  meta.innerHTML = html;
+}
 
 // Clear
 $('#clearBtn').addEventListener('click', () => {
@@ -1945,6 +2213,10 @@ $('#sanitizeBtn').addEventListener('click', () => {
   // Mapping table
   renderMappingTable(currentResult.replacements);
   $('#mappingCount').textContent = `${currentResult.replacements.length} replacements`;
+
+  // Validation pass
+  const warnings = validateSanitized(currentResult.sanitizedText, options);
+  renderWarnings(warnings);
 });
 
 // Copy
@@ -2122,6 +2394,76 @@ function renderMappingTable(replacements) {
       <td>${escapeHtml(entry.placeholder)}</td>
       <td>${escapeHtml(maskValue(entry))}</td>
     </tr>
+  `).join('');
+}
+
+// ---- View toggle (Output / Diff) ----
+$$('.view-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.view-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const view = btn.dataset.view;
+    if (view === 'diff') {
+      $('#sanitizedOutput').classList.add('hidden');
+      $('#diffView').classList.remove('hidden');
+      if (currentResult) renderDiff($('#configInput').value, currentResult.sanitizedText);
+    } else {
+      $('#sanitizedOutput').classList.remove('hidden');
+      $('#diffView').classList.add('hidden');
+    }
+  });
+});
+
+function renderDiff(original, sanitized) {
+  const origLines = original.split('\n');
+  const sanLines = sanitized.split('\n');
+  const maxLines = Math.max(origLines.length, sanLines.length);
+  let html = '<table class="diff-table">';
+  html += '<thead><tr><th class="diff-ln" style="padding:6px 8px;font-size:11px;border-bottom:1px solid var(--border)">Line</th><th style="padding:6px 12px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">Original</th><td class="diff-sep"></td><th class="diff-ln" style="padding:6px 8px;font-size:11px;border-bottom:1px solid var(--border)">Line</th><th style="padding:6px 12px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">Sanitized</th></tr></thead><tbody>';
+
+  for (let i = 0; i < maxLines; i++) {
+    const origLine = origLines[i] || '';
+    const sanLine = sanLines[i] || '';
+    const changed = origLine !== sanLine;
+    const rowClass = changed ? 'diff-changed' : 'diff-same';
+    html += `<tr class="${rowClass}">`;
+    html += `<td class="diff-ln">${i + 1}</td>`;
+    html += `<td class="${changed ? 'diff-old' : ''}">${escapeHtml(origLine)}</td>`;
+    html += `<td class="diff-sep"></td>`;
+    html += `<td class="diff-ln">${i + 1}</td>`;
+    html += `<td class="${changed ? 'diff-new' : ''}">${escapeHtml(sanLine)}</td>`;
+    html += `</tr>`;
+  }
+
+  html += '</tbody></table>';
+  $('#diffView').innerHTML = html;
+}
+
+function renderWarnings(warnings) {
+  const panel = $('#warningsPanel');
+  const list = $('#warningsList');
+  const title = $('#warningsTitle');
+
+  if (warnings.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  const highCount = warnings.filter(w => w.severity === 'high').length;
+  const medCount = warnings.filter(w => w.severity === 'medium').length;
+  const parts = [];
+  if (highCount) parts.push(`${highCount} high`);
+  if (medCount) parts.push(`${medCount} medium`);
+  title.textContent = `Review needed: ${warnings.length} potential issue${warnings.length > 1 ? 's' : ''} found (${parts.join(', ')})`;
+
+  list.innerHTML = warnings.map(w => `
+    <div class="warning-item">
+      <span class="w-sev ${w.severity}">${w.severity}</span>
+      <span class="w-line">L${w.line}</span>
+      <span class="w-msg">${escapeHtml(w.message)}</span>
+      <span class="w-snippet">${escapeHtml(w.snippet)}</span>
+    </div>
   `).join('');
 }
 
