@@ -773,6 +773,166 @@ html.light .warnings-panel {
   filter: blur(2px);
 }
 
+/* Salt tooltip */
+.salt-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  width: 420px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  z-index: 100;
+  cursor: default;
+}
+
+.salt-tooltip::after {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 24px;
+  border: 8px solid transparent;
+  border-bottom-color: var(--border);
+}
+
+.salt-wrap:hover .salt-tooltip { display: block; }
+
+.salt-tooltip p { margin-bottom: 8px; }
+.salt-tooltip p:last-child { margin-bottom: 0; }
+.salt-tooltip ul { margin: 0 0 8px 20px; padding: 0; }
+.salt-tooltip li { margin-bottom: 2px; }
+.salt-tooltip code {
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* ---- Mobile responsive ---- */
+@media (max-width: 768px) {
+  header {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .header-right {
+    justify-content: center;
+    gap: 8px;
+  }
+
+  main { padding: 12px; }
+
+  .upload-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .upload-bar .btn,
+  .upload-bar .btn-primary { flex: 1; min-width: 0; justify-content: center; }
+
+  .filename { width: 100%; order: 3; }
+
+  .options-bar {
+    gap: 4px 10px;
+    padding: 10px 12px;
+  }
+
+  .opt-check { font-size: 11px; }
+
+  /* Advanced bar: stack salt and custom words */
+  .advanced-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .salt-wrap { flex-direction: column; align-items: stretch !important; }
+  .salt-wrap input { width: 100% !important; }
+
+  .salt-tooltip {
+    width: calc(100vw - 48px) !important;
+    left: -12px !important;
+    max-width: none;
+  }
+
+  textarea { min-height: 250px; font-size: 11px; padding: 10px; }
+
+  /* Stats bar */
+  .stats-bar { gap: 4px; padding: 8px 10px; }
+  .stat { font-size: 11px; padding: 3px 7px; }
+
+  /* Output section */
+  .output-header { flex-direction: column; gap: 10px; align-items: stretch; }
+  .download-bar { flex-wrap: wrap; gap: 6px; }
+  .download-bar .btn,
+  .download-bar .btn-success,
+  .download-bar .btn-primary { flex: 1; min-width: 0; justify-content: center; font-size: 12px; padding: 8px 10px; }
+
+  .view-toggle { margin-right: 0; }
+  .view-toggle .view-btn { flex: 1; justify-content: center; }
+
+  /* Diff table: make scrollable */
+  .diff-container { max-height: 400px; font-size: 10px; }
+  .diff-table td { padding: 0 6px; font-size: 10px; }
+  .diff-table .diff-ln { width: 32px; font-size: 10px; }
+
+  /* Warnings */
+  .warning-item { flex-wrap: wrap; gap: 4px 8px; padding: 6px 10px; font-size: 11px; }
+  .warning-item .w-snippet { max-width: 100%; }
+
+  /* Info grid */
+  .info-grid { grid-template-columns: 1fr; gap: 6px; }
+  .info-chips { gap: 6px; }
+  .info-chip { font-size: 12px; padding: 5px 10px; }
+
+  /* Modal */
+  .modal { padding: 20px; }
+  .modal h2 { font-size: 17px; }
+  .modal p { font-size: 13px; }
+
+  /* Restore panel */
+  .file-status { flex-direction: column; gap: 10px; }
+
+  /* Mapping table */
+  .mapping-table-wrap { max-height: 350px; }
+  table { font-size: 11px; }
+  th { padding: 8px 10px; font-size: 10px; }
+  td { padding: 6px 10px; font-size: 11px; }
+}
+
+@media (max-width: 480px) {
+  header h1 { font-size: 15px; }
+  header .subtitle { font-size: 11px; }
+  .tab { padding: 5px 12px; font-size: 12px; }
+  main { padding: 8px; }
+
+  .options-bar { gap: 3px 8px; padding: 8px 10px; }
+  .opt-check { font-size: 10px; gap: 3px; }
+  .options-bar .options-label { font-size: 10px; }
+
+  textarea { min-height: 200px; font-size: 10px; }
+
+  .download-bar { flex-direction: column; }
+  .download-bar .btn,
+  .download-bar .btn-success,
+  .download-bar .btn-primary { width: 100%; }
+
+  .diff-container { max-height: 300px; }
+
+  .info-section { padding: 12px; }
+  .info-section h3 { font-size: 13px; }
+  .risk-notice p { font-size: 12px; }
+}
+
 .hidden { display: none !important; }
 </style>
 </head>
@@ -839,11 +999,26 @@ html.light .warnings-panel {
         <label class="opt-check"><input type="checkbox" data-opt="sysHostname" checked> Device Name</label>
         <label class="opt-check"><input type="checkbox" data-opt="urls" checked> URLs</label>
       </div>
-      <div class="options-bar" style="gap:12px">
+      <div class="options-bar advanced-bar" style="gap:12px">
         <span class="options-label">Advanced:</span>
-        <label class="opt-check" style="gap:6px" title="Same salt + same config = identical output. Use to process HA pairs separately.">
-          Salt <input type="text" id="saltInput" placeholder="optional deterministic salt" style="width:200px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">
-        </label>
+        <span class="salt-wrap" style="position:relative;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:default">
+          <span class="salt-label" style="cursor:help;border-bottom:1px dashed var(--text-dim)">Salt</span>
+          <input type="text" id="saltInput" placeholder="e.g. project-alpha-2026" style="width:200px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">
+          <div class="salt-tooltip">
+            <p><strong>The salt controls how IPs get anonymized.</strong></p>
+            <p>Without it, every time you click Sanitize, a random seed is generated — so the same IP maps to a different replacement each time.</p>
+            <p><strong>With a salt</strong>, the mapping becomes deterministic:</p>
+            <ul>
+              <li><code>10.1.1.1</code> + salt <code>abc</code> → always produces the same result</li>
+              <li><code>10.1.1.1</code> + salt <code>xyz</code> → always produces a different result</li>
+              <li><code>10.1.1.1</code> + no salt → random result each time</li>
+            </ul>
+            <p><strong>Why this matters — the HA pair use case:</strong></p>
+            <p>Say you have two firewalls in a high-availability pair. You sanitize them separately. Without a salt, the same IP gets a different replacement in each file — making it impossible to correlate them.</p>
+            <p>With the same salt on both, the same IP maps to the same anonymized IP in both outputs. The two sanitized configs stay internally consistent.</p>
+            <p><strong>In short:</strong> leave it blank for one-off sanitizations. Set a salt when you need multiple configs to use the same anonymization mapping.</p>
+          </div>
+        </span>
         <label class="opt-check" style="gap:6px;flex:1" title="Comma-separated words to redact (e.g. company name, city codes, project names)">
           Custom words <input type="text" id="customWordsInput" placeholder="ACME, NYC-DC, ProjectX" style="flex:1;min-width:200px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">
         </label>
