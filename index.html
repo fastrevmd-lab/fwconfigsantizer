@@ -532,11 +532,98 @@ tr:hover td { background: var(--surface); }
   cursor: pointer;
 }
 
+/* Disclaimer modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  max-width: 640px;
+  width: 100%;
+  padding: 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.modal h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--warning);
+  margin-bottom: 16px;
+}
+
+.modal p {
+  font-size: 14px;
+  color: var(--text-dim);
+  line-height: 1.7;
+  margin-bottom: 12px;
+}
+
+.modal p:last-of-type {
+  margin-bottom: 24px;
+}
+
+.modal .accept-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.modal .accept-row input {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.modal .btn-accept {
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.app-disabled {
+  pointer-events: none;
+  opacity: 0.3;
+  filter: blur(2px);
+}
+
 .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
+<!-- Disclaimer modal -->
+<div class="modal-overlay" id="disclaimerModal">
+  <div class="modal">
+    <h2>Risk Disclaimer</h2>
+    <p>This tool is provided on a <strong>best-effort basis</strong> and does not guarantee complete removal of all sensitive or identifying information. Firewall configurations are complex and vary widely across vendors, software versions, and deployment styles.</p>
+    <p>There may be organization-specific data -- such as custom naming conventions, internal topology hints, policy structures, interface descriptions, routing details, VPN peer relationships, or vendor-specific extensions -- that this tool does not recognize or sanitize.</p>
+    <p><strong>You are responsible for reviewing the sanitized output before sharing it externally.</strong> Always verify the output meets your organization's security and data handling requirements. This tool runs entirely in your browser and no data is transmitted externally, but the sanitized configuration should still be treated with care.</p>
+    <label class="accept-row">
+      <input type="checkbox" id="acceptCheck">
+      I understand and accept the risks described above
+    </label>
+    <button class="btn btn-primary btn-accept" id="acceptBtn" disabled>Continue</button>
+  </div>
+</div>
+
+<div id="appWrap" class="app-disabled">
 <header>
   <div>
     <h1>Firewall Config Sanitizer</h1>
@@ -725,6 +812,7 @@ tr:hover td { background: var(--surface); }
     </div>
   </div>
 </main>
+</div><!-- /appWrap -->
 
 <script>
 /* ===========================================================================
@@ -2042,6 +2130,24 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ---- Disclaimer modal ----
+const disclaimerAccepted = localStorage.getItem('disclaimerAccepted') === 'true';
+if (disclaimerAccepted) {
+  $('#disclaimerModal').classList.add('hidden');
+  $('#appWrap').classList.remove('app-disabled');
+}
+
+$('#acceptCheck').addEventListener('change', (e) => {
+  $('#acceptBtn').disabled = !e.target.checked;
+});
+
+$('#acceptBtn').addEventListener('click', () => {
+  if (!$('#acceptCheck').checked) return;
+  localStorage.setItem('disclaimerAccepted', 'true');
+  $('#disclaimerModal').classList.add('hidden');
+  $('#appWrap').classList.remove('app-disabled');
+});
 
 // ---- Theme toggle ----
 const themeToggle = $('#themeToggle');
