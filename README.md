@@ -2,6 +2,8 @@
 
 A portable, browser-based tool that sanitizes firewall configurations by replacing sensitive and identifiable information with safe placeholders. Runs 100% client-side — no data leaves your machine.
 
+![Firewall Config Sanitizer screenshot](screenshot.png)
+
 ## Usage
 
 1. Download `index.html`

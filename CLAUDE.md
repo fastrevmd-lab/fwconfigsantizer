@@ -29,7 +29,3 @@ sensitive/identifiable information with safe placeholders. Produces two files:
 | System hostname | sanitized-fw |
 | Descriptions/comments | (removed) |
 | Domain names | example-N.net |
-
-## Reference
-Sanitization logic originally from: git@github.com:fastrevmd-lab/firewall-intent-converter.git
-(public/utils/engine.js sanitizeConfig function)
