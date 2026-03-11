@@ -2597,7 +2597,7 @@ $('#fileInput').addEventListener('change', (e) => {
   const reader = new FileReader();
   reader.onload = (ev) => {
     $('#configInput').value = ev.target.result;
-    $('#fileLabel').innerHTML = `<strong>${file.name}</strong> (${formatSize(file.size)})`;
+    $('#fileLabel').innerHTML = `<strong>${escapeHtml(file.name)}</strong> (${formatSize(file.size)})`;
     $('#sanitizeBtn').disabled = false;
     updateConfigMeta(ev.target.result);
   };
@@ -3058,7 +3058,7 @@ configInput.addEventListener('drop', (e) => {
   const reader = new FileReader();
   reader.onload = (ev) => {
     configInput.value = ev.target.result;
-    $('#fileLabel').innerHTML = `<strong>${file.name}</strong> (${formatSize(file.size)})`;
+    $('#fileLabel').innerHTML = `<strong>${escapeHtml(file.name)}</strong> (${formatSize(file.size)})`;
     $('#sanitizeBtn').disabled = false;
     updateConfigMeta(ev.target.result);
   };
