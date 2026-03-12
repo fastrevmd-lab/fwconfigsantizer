@@ -1078,6 +1078,7 @@ html.light .warnings-panel {
           <span class="info-chip">Fortinet FortiGate (FortiOS)</span>
           <span class="info-chip">Palo Alto PAN-OS / Panorama</span>
           <span class="info-chip">Juniper SRX (Junos)</span>
+          <span class="info-chip">Check Point Gaia</span>
         </div>
       </div>
 
@@ -1294,6 +1295,23 @@ function detectVendor(text) {
       sample.includes('object network') || sample.includes('fixup protocol')) {
     return 'asa';
   }
+  // Check Point: dbedit objects_5_0.C, Gaia clish, SmartConsole export
+  {
+    let cpScore = 0;
+    // dbedit format markers
+    if (sample.includes(':type (')) cpScore += 2;
+    if (sample.includes(':color (') || sample.includes(':ipaddr ') || sample.includes(':netmask ')) cpScore++;
+    if (/:\w+\s+\("/.test(sample)) cpScore++;
+    // Gaia CLI markers
+    if (sample.includes('ipv4-address') && sample.includes('mask-length')) cpScore += 2;
+    if (sample.includes('set static-route') || (sample.includes('set user') && sample.includes('password-hash'))) cpScore++;
+    if (sample.includes('set hostname') && (sample.includes('set interface') || sample.includes('add user'))) cpScore++;
+    // SmartConsole export markers
+    if (sample.includes('object-type: host') || sample.includes('object-type: network') || sample.includes('rule-number:')) cpScore++;
+    // Common Check Point markers
+    if (sample.includes('fw1') || sample.includes('cpconfig') || sample.includes('fw ctl') || sample.includes('policy-name')) cpScore++;
+    if (cpScore >= 3) return 'checkpoint';
+  }
   return 'unknown';
 }
 
@@ -1477,6 +1495,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   const isPanos = vendor === 'panos';
   const isSrx = vendor === 'srx';
   const isAsa = vendor === 'asa';
+  const isCheckpoint = vendor === 'checkpoint';
   const runAll = vendor === 'unknown';
 
   // De-duplication maps: same original value -> same placeholder
@@ -1546,6 +1565,32 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:password|passwd|private-key|secret)\s+)(ENC\s+\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  }
+
+  // Check Point dbedit: :passwd ("hash")
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:passwd\s+\(")([^"]+)("\))/gi,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+  }
+
+  // Check Point Gaia: set user <name> password-hash <hash>
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+user\s+\S+\s+password-hash\s+)(\S+)/gi,
     (match, prefix, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
@@ -1631,6 +1676,19 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     }
   );
 
+  // Check Point SIC keys: :sic_name ("...") and :ica_cert_req ("...")
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:(?:sic_name|ica_cert_req)\s+\(")([^"]+)("\))/gi,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+  }
+
   // ASA: tunnel-group ... ipsec-attributes + ikev1 pre-shared-key
   if (isAsa || runAll) {
   sanitized = sanitized.replace(
@@ -1684,6 +1742,32 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
       addReplacement('community', placeholder, value);
       return `${prefix}${placeholder}`;
+    }
+  );
+  }
+
+  // Check Point Gaia: set snmp community <name>
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+snmp\s+community\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  }
+
+  // Check Point dbedit: :snmp_community ("name")
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:snmp_community\s+\(")([^"]+)("\))/gi,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
     }
   );
   }
@@ -1777,6 +1861,40 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
         addReplacement('username', placeholder, name);
       }
       return `${prefix}${placeholder}`;
+    }
+  );
+  }
+
+  // Check Point Gaia: set user <name> / add user <name>
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /((?:set|add)\s+user\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      let placeholder = usernameMap.get(name);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(name, placeholder);
+        addReplacement('username', placeholder, name);
+      }
+      return `${prefix}${placeholder}`;
+    }
+  );
+  }
+
+  // Check Point dbedit: :administrator ("name")
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:administrator\s+\(")([^"]+)("\))/gi,
+    (match, prefix, name, suffix) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      let placeholder = usernameMap.get(name);
+      if (!placeholder) {
+        placeholder = `user-${counter.user++}`;
+        usernameMap.set(name, placeholder);
+        addReplacement('username', placeholder, name);
+      }
+      return `${prefix}${placeholder}${suffix}`;
     }
   );
   }
@@ -1902,6 +2020,34 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
   }
 
+  // Check Point Gaia: set hostname <name>
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+hostname\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('sanitized-') || name.startsWith('"')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}${placeholder}`;
+    }
+  );
+  }
+
+  // Check Point dbedit: :name ("GATEWAY") followed by :type (gateway/cluster)
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:name\s+\(")([^"]+)("\)\s*\n\s*:type\s+\((?:gateway|cluster|gateway_cluster))/gi,
+    (match, prefix, name, suffix) => {
+      if (name.startsWith('sanitized-')) return match;
+      const placeholder = `sanitized-fw`;
+      addReplacement('sys_hostname', placeholder, name);
+      counter.sysHostname++;
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+  }
+
   } // end opts.sysHostname
 
   // -----------------------------------------------------------------------
@@ -1962,6 +2108,24 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
   }
 
+  // Check Point dbedit: server references in :log_server, :syslog_server, etc.
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:(?:log_server|syslog_server|tacacs_server|radius_server)\s+\(")([^"]+)("\))/gi,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('host-') || value.startsWith('REDACTED_')) return match;
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
+      let placeholder = hostnameMap.get(value);
+      if (!placeholder) {
+        placeholder = `host-${counter.host++}.example.net`;
+        hostnameMap.set(value, placeholder);
+        addReplacement('hostname', placeholder, value);
+      }
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+  }
+
   } // end opts.hostnames
 
   // -----------------------------------------------------------------------
@@ -1991,6 +2155,29 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+
+  // Check Point Gaia: set bgp as <number>
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+bgp\s+as\s+)(\d+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
+      addReplacement('bgp', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  // set bgp peer <IP> as <number>
+  sanitized = sanitized.replace(
+    /(set\s+bgp\s+peer\s+\S+\s+as\s+)(\d+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
+      addReplacement('bgp', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  }
 
   } // end opts.bgp
 
@@ -2055,6 +2242,32 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(description\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+  }
+
+  // Check Point dbedit: :comments ("text")
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:comments\s+\(")([^"]+)("\))/gi,
+    (match, prefix, value, suffix) => {
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+  }
+
+  // Check Point Gaia: set comment "text"
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+comment\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
       const placeholder = `SANITIZED_DESC_${counter.description++}`;
@@ -2230,6 +2443,17 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
   }
 
+  // Check Point Gaia: set interface <name> (custom logical interface/zone names)
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+interface\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (/^(eth\d+|bond\d+|lo|mgmt\d*|sync|Sync)$/i.test(name)) return match;
+      return `${prefix}${zoneReplace(name)}`;
+    }
+  );
+  }
+
   } // end opts.zones
 
   // -----------------------------------------------------------------------
@@ -2332,6 +2556,17 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     /((?:address-set|address|application-set|application)\s+)(\S+)(\s+(?:\{|address|protocol))/gi,
     (match, prefix, name, suffix) => {
       if (name === '{') return match;
+      return `${prefix}${objReplace(name)}${suffix}`;
+    }
+  );
+  }
+
+  // Check Point dbedit: :name ("OBJECT_NAME")
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(:name\s+\(")([^"]+)("\))/gi,
+    (match, prefix, name, suffix) => {
+      if (name.startsWith('sanitized-')) return match;
       return `${prefix}${objReplace(name)}${suffix}`;
     }
   );
@@ -2453,7 +2688,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
 
   const intfMap = new Map();
   // Structural interface names to skip (vendor defaults)
-  const structuralIntf = /^(port\d|wan\d?|lan\d?|dmz\d?|mgmt\d?|lo\d?|loopback\d*|vlan\d+|ge-\d|xe-\d|et-\d|ae\d|st\d|irb\d|fxp\d|em\d|me\d|GigabitEthernet\d|FastEthernet\d|TenGigabitEthernet\d|Ethernet\d|Management\d|Loopback\d|Tunnel\d|Vlan\d|BVI\d|null\d|any|self)$/i;
+  const structuralIntf = /^(port\d|wan\d?|lan\d?|dmz\d?|mgmt\d?|lo\d?|loopback\d*|vlan\d+|ge-\d|xe-\d|et-\d|ae\d|st\d|irb\d|fxp\d|em\d|me\d|eth\d+|bond\d+|sync|GigabitEthernet\d|FastEthernet\d|TenGigabitEthernet\d|Ethernet\d|Management\d|Loopback\d|Tunnel\d|Vlan\d|BVI\d|null\d|any|self)$/i;
 
   function intfReplace(name) {
     if (!name || structuralIntf.test(name)) return name;
@@ -2499,6 +2734,17 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     (match, prefix, name, suffix) => {
       if (structuralIntf.test(name)) return match;
       return `${prefix}${intfReplace(name)}${suffix}`;
+    }
+  );
+  }
+
+  // Check Point Gaia: set interface <name>
+  if (isCheckpoint || runAll) {
+  sanitized = sanitized.replace(
+    /(set\s+interface\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (structuralIntf.test(name)) return match;
+      return `${prefix}${intfReplace(name)}`;
     }
   );
   }
@@ -2928,6 +3174,7 @@ const VENDOR_LABELS = {
   fortigate: 'FortiGate',
   panos: 'Palo Alto PAN-OS',
   srx: 'Juniper SRX',
+  checkpoint: 'Check Point Gaia',
   unknown: 'Unknown Vendor',
 };
 

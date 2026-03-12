@@ -74,6 +74,7 @@ Vendor is auto-detected and only the relevant sanitization rules are applied, re
 - Fortinet FortiGate (FortiOS)
 - Palo Alto PAN-OS / Panorama
 - Juniper SRX (Junos)
+- Check Point Gaia (R80.x / R81.x) — dbedit (objects_5_0.C), Gaia clish, SmartConsole export
 
 ## Restoring a Config
 
