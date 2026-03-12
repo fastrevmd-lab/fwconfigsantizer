@@ -27,5 +27,5 @@ sensitive/identifiable information with safe placeholders. Produces two files:
 | BGP AS numbers | REDACTED_BGP_N |
 | Server hostnames | host-N.example.net |
 | System hostname | sanitized-fw |
-| Descriptions/comments | (removed) |
+| Descriptions/comments | SANITIZED_DESC_N |
 | Domain names | example-N.net |

@@ -42,7 +42,7 @@ Each category can be individually enabled or disabled via checkboxes before sani
 | Email addresses | `user-N@example.net` |
 | URLs | Domain replaced with `example-N.net`, path preserved |
 | Interface names (opt-in) | `intf-0`, `intf-1`, ... (structural names like port1, ge-0/0/0 preserved) |
-| Descriptions & comments | `(sanitized)` |
+| Descriptions & comments | `SANITIZED_DESC_N` |
 | Custom words | `REDACTED_WORD_N` |
 
 CIDR prefix lengths (e.g. `/24`, `/32`) are preserved alongside their replaced IP addresses.
@@ -52,7 +52,7 @@ CIDR prefix lengths (e.g. `/24`, `/32`) are preserved alongside their replaced I
 - **Prefix-preserving IP anonymization** — IPs sharing a subnet stay in the same subnet after anonymization (e.g. two hosts on the same /24 remain on the same /24)
 - **Deterministic salt** — provide an optional salt so the same config always produces the same output; enables processing HA pairs separately with compatible results
 - **Custom sensitive word list** — add comma-separated org-specific terms (company name, city codes, project names) to redact globally
-- **Batch mode** — sanitize multiple config files at once with the same salt and options; downloads a zip with all sanitized files and a combined mapping
+- **Batch mode** — sanitize multiple config files at once with the same salt and options; downloads a zip with all sanitized files and a combined mapping. Auto-generated salts are displayed in the stats bar for recording
 - **Interface name sanitization** — opt-in category to replace topology-leaking interface names (WAN-MPLS-NYC) while preserving structural ones (port1, ge-0/0/0)
 - **Drag-and-drop upload** — drop a config file directly onto the text area
 - **URL sanitization** — HTTP/HTTPS/LDAP/FTP URLs have their domain replaced while preserving path and port
@@ -67,6 +67,8 @@ CIDR prefix lengths (e.g. `/24`, `/32`) are preserved alongside their replaced I
 - **Restore** — upload a sanitized config + mapping file to reconstruct the original
 
 ## Supported Vendors
+
+Vendor is auto-detected and only the relevant sanitization rules are applied, reducing false positives and improving performance. Unrecognized configs run all rules in best-effort mode.
 
 - Cisco ASA / FTD
 - Fortinet FortiGate (FortiOS)

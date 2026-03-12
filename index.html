@@ -1473,6 +1473,11 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
 
   let sanitized = configText;
   const vendor = detectVendor(configText);
+  const isFortigate = vendor === 'fortigate';
+  const isPanos = vendor === 'panos';
+  const isSrx = vendor === 'srx';
+  const isAsa = vendor === 'asa';
+  const runAll = vendor === 'unknown';
 
   // De-duplication maps: same original value -> same placeholder
   const publicIpMap = new Map();
@@ -1516,6 +1521,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.credentials) {
 
   // XML tag hashes: <phash>, <password-hash>, <encrypted-secret>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:phash|password-hash|encrypted-secret)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
@@ -1524,6 +1530,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // Attribute-style hashes: password "$1$...", secret "$sha1$..."
   sanitized = sanitized.replace(
@@ -1536,6 +1543,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // FortiGate ENC hashes: set password ENC <base64>
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:password|passwd|private-key|secret)\s+)(ENC\s+\S+)/gi,
     (match, prefix, value) => {
@@ -1545,8 +1553,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   // ASA encrypted passwords: password <hash> encrypted
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(password\s+)(\S+)(\s+encrypted)/gi,
     (match, prefix, value, suffix) => {
@@ -1556,6 +1566,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${suffix}`;
     }
   );
+  }
 
   // -----------------------------------------------------------------------
   // 2. PRE-SHARED KEYS, API KEYS, SECRETS
@@ -1563,6 +1574,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // (still inside opts.credentials guard)
 
   // Nested XML keys: <pre-shared-key><key>VALUE</key></pre-shared-key>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:pre-shared-key|api-key|auth-key|secret|key)>)\s*(<key>)([^<]+)(<\/key>)/gi,
     (match, outerOpen, innerOpen, value, innerClose) => {
@@ -1571,8 +1583,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${outerOpen}${innerOpen}${placeholder}${innerClose}`;
     }
   );
+  }
 
   // Simple XML key tags
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:pre-shared-key|api-key|auth-key|secret-key)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
@@ -1582,6 +1596,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // Set-format secrets (quoted)
   sanitized = sanitized.replace(
@@ -1617,6 +1632,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // ASA: tunnel-group ... ipsec-attributes + ikev1 pre-shared-key
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /((?:ikev[12]\s+)?pre-shared-key\s+)(\S+)/gi,
     (match, prefix, value) => {
@@ -1626,6 +1642,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   } // end opts.credentials
 
@@ -1635,6 +1652,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.snmp) {
 
   // XML
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<community>)([^<]+)(<\/community>)/gi,
     (match, open, value, close) => {
@@ -1644,6 +1662,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // ASA/FortiGate/SRX: snmp-server community <name>
   sanitized = sanitized.replace(
@@ -1657,6 +1676,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // SRX/Junos: set snmp community <name>
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(set\s+snmp\s+community\s+)(\S+)/gi,
     (match, prefix, value) => {
@@ -1666,6 +1686,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   } // end opts.snmp
 
@@ -1675,6 +1696,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.usernames) {
 
   // XML auth context tags
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:admin-username|radius-username|tacplus-username|ldap-bind-dn)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
@@ -1689,8 +1711,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // PAN-OS: <users><entry name="xxx">
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<entry\s+name=")([^"]+)("(?:[^>]*)>\s*(?:<phash|<password|<permissions))/gi,
     (match, prefix, name, suffix) => {
@@ -1704,8 +1728,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${suffix}`;
     }
   );
+  }
 
   // ASA: username <name> password/privilege
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(username\s+)(\S+)(\s+(?:password|privilege|attributes))/gi,
     (match, prefix, name, suffix) => {
@@ -1719,8 +1745,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${suffix}`;
     }
   );
+  }
 
   // FortiGate: config system admin → edit "admin_name"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(config\s+system\s+admin[\s\S]*?edit\s+)"([^"]+)"/gi,
     (match, prefix, name) => {
@@ -1734,8 +1762,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}"${placeholder}"`;
     }
   );
+  }
 
   // SRX: set system login user <name>
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(set\s+system\s+login\s+user\s+)(\S+)/gi,
     (match, prefix, name) => {
@@ -1749,6 +1779,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   } // end opts.usernames
 
@@ -1768,6 +1799,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // XML private key tags
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:private-key|certificate-key|ssl-key)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
@@ -1777,6 +1809,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   } // end opts.certificates
 
@@ -1786,6 +1819,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.sysHostname) {
 
   // ASA: hostname DEVICE_NAME
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /^(hostname\s+)(\S+)/gim,
     (match, prefix, name) => {
@@ -1796,8 +1830,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   // FortiGate: set hostname "DEVICE_NAME"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+hostname\s+)"([^"]+)"/gi,
     (match, prefix, name) => {
@@ -1808,8 +1844,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}"${placeholder}"`;
     }
   );
+  }
 
   // FortiGate unquoted: set hostname DEVICE_NAME
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+hostname\s+)(\S+)/gi,
     (match, prefix, name) => {
@@ -1820,8 +1858,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   // PAN-OS: <hostname>NAME</hostname>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<hostname>)([^<]+)(<\/hostname>)/gi,
     (match, open, value, close) => {
@@ -1832,8 +1872,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // SRX: set system host-name <name>
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(set\s+system\s+host-name\s+)(\S+)/gi,
     (match, prefix, name) => {
@@ -1844,8 +1886,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   // SRX hierarchical: host-name <name>;
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(host-name\s+)(\S+)(;)/gi,
     (match, prefix, name, semi) => {
@@ -1856,6 +1900,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${semi}`;
     }
   );
+  }
 
   } // end opts.sysHostname
 
@@ -1865,6 +1910,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.hostnames) {
 
   // XML tags for servers
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:ldap-server-address|radius-server-ip|tacplus-server-ip|ntp-server-address|dns-server-address|server-address|server-name|server-host|syslog-server)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
@@ -1881,6 +1927,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // Set-format server hostnames
   sanitized = sanitized.replace(
@@ -1899,6 +1946,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // ASA: logging host <interface> <hostname>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(logging\s+host\s+\S+\s+)([a-zA-Z][\w.-]+\.[a-zA-Z]{2,})/gi,
     (match, prefix, value) => {
@@ -1912,6 +1960,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   } // end opts.hostnames
 
@@ -1921,6 +1970,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.bgp) {
 
   // XML
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:local-as|peer-as|autonomous-system|local-as-number|remote-as)>)(\d+)(<\/)/gi,
     (match, open, value, close) => {
@@ -1929,6 +1979,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // Set/CLI format
   sanitized = sanitized.replace(
@@ -1949,59 +2000,69 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.descriptions) {
 
   // ASA: description <text> / remark <text>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /^(\s*(?:description|remark)\s+)(.+)$/gim,
     (match, prefix, text) => {
-      if (text.trim() === '(sanitized)') return match;
-      addReplacement('description', '(sanitized)', text.trim());
-      counter.description++;
-      return `${prefix}(sanitized)`;
+      if (/^SANITIZED_DESC_\d+$/.test(text.trim())) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, text.trim());
+      return `${prefix}${placeholder}`;
     }
   );
+  }
 
   // FortiGate: set comment "..."
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+comment\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
-      if (value === '(sanitized)') return match;
-      addReplacement('description', '(sanitized)', value);
-      counter.description++;
-      return `${prefix}"(sanitized)"`;
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
     }
   );
+  }
 
   // FortiGate: set comments "..."
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+comments\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
-      if (value === '(sanitized)') return match;
-      addReplacement('description', '(sanitized)', value);
-      counter.description++;
-      return `${prefix}"(sanitized)"`;
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
     }
   );
+  }
 
   // PAN-OS: <description>text</description>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<description>)([^<]+)(<\/description>)/gi,
     (match, open, value, close) => {
-      if (value.trim() === '(sanitized)') return match;
-      addReplacement('description', '(sanitized)', value.trim());
-      counter.description++;
-      return `${open}(sanitized)${close}`;
+      if (/^SANITIZED_DESC_\d+$/.test(value.trim())) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // SRX: description "text"
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(description\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
-      if (value === '(sanitized)') return match;
-      addReplacement('description', '(sanitized)', value);
-      counter.description++;
-      return `${prefix}"(sanitized)"`;
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
     }
   );
+  }
 
   } // end opts.descriptions
 
@@ -2011,6 +2072,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (opts.domains) {
 
   // FortiGate: set fqdn "domain.com"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+fqdn\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
@@ -2024,8 +2086,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}"${placeholder}"`;
     }
   );
+  }
 
   // ASA: fqdn v4 domain.com
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(fqdn\s+v[46]\s+)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gi,
     (match, prefix, value) => {
@@ -2039,8 +2103,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  }
 
   // PAN-OS: <fqdn>domain.com</fqdn>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<fqdn>)([^<]+)(<\/fqdn>)/gi,
     (match, open, value, close) => {
@@ -2055,6 +2121,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
+  }
 
   // set domain-name / domain-name <fqdn>
   sanitized = sanitized.replace(
@@ -2092,52 +2159,67 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   }
 
   // ASA: nameif <zone_name>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(nameif\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${zoneReplace(name)}`
   );
+  }
 
   // ASA: access-group <acl_name> in interface <zone>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /((?:in|out)\s+interface\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${zoneReplace(name)}`
   );
+  }
 
   // FortiGate: set srcintf "zone" / set dstintf "zone"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:srcintf|dstintf)\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
   );
+  }
 
   // FortiGate: set associated-interface "zone"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+associated-interface\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
   );
+  }
 
   // FortiGate: config system zone → edit "zone_name"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(config\s+system\s+zone[\s\S]*?edit\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
   );
+  }
 
   // FortiGate: set interface "port1" "port2" under zone
   // This handles zone member interfaces - we'll leave interface names alone
   // since they're structural (port1, wan1, etc.)
 
   // PAN-OS: <zone><entry name="zone_name">
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<zone>\s*<entry\s+name=")([^"]+)(")/gi,
     (match, prefix, name, suffix) => `${prefix}${zoneReplace(name)}${suffix}`
   );
+  }
 
   // PAN-OS: <to><member>zone</member></to> and <from><member>zone</member></from>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:to|from)>\s*<member>)([^<]+)(<\/member>)/gi,
     (match, prefix, name, suffix) => `${prefix}${zoneReplace(name)}${suffix}`
   );
+  }
 
   // SRX: security-zone <name> or from-zone <name> to-zone <name>
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /((?:security-zone|from-zone|to-zone)\s+)(\S+)/gi,
     (match, prefix, name) => {
@@ -2146,6 +2228,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${zoneReplace(name)}`;
     }
   );
+  }
 
   } // end opts.zones
 
@@ -2177,30 +2260,39 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   }
 
   // ASA: object network <name> / object-group network <name> / object service <name>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(object(?:-group)?\s+(?:network|service)\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${objReplace(name)}`
   );
+  }
 
   // ASA: access-list <acl_name>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(access-list\s+)(\S+)(\s+(?:extended|standard|remark|line))/gi,
     (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
   );
+  }
 
   // ASA: access-group <acl_name>
+  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(access-group\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${objReplace(name)}`
   );
+  }
 
   // FortiGate: config firewall address → edit "name"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(config\s+firewall\s+(?:address|addrgrp|service\s+custom|service\s+group|vip|ippool)\s*\n\s*edit\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${objReplace(name)}"`
   );
+  }
 
   // FortiGate: set srcaddr/dstaddr/service "name"
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:srcaddr|dstaddr|service|dstaddr6|srcaddr6|poolname|nat-source-vip|groups|member)\s+)"([^"]+)"/gi,
     (match, prefix, name) => {
@@ -2213,14 +2305,18 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}"${objReplace(name)}"`;
     }
   );
+  }
 
   // PAN-OS: <address><entry name="name"> / <address-group><entry name="name">
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:address|address-group|service|service-group|application-group|tag)>\s*<entry\s+name=")([^"]+)(")/gi,
     (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
   );
+  }
 
   // PAN-OS: <source|destination><member>name</member>
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:source|destination|source-user|tag)>\s*<member>)([^<]+)(<\/member>)/gi,
     (match, prefix, name, suffix) => {
@@ -2228,8 +2324,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${objReplace(name)}${suffix}`;
     }
   );
+  }
 
   // SRX: address-set <name> / address <name>
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /((?:address-set|address|application-set|application)\s+)(\S+)(\s+(?:\{|address|protocol))/gi,
     (match, prefix, name, suffix) => {
@@ -2237,6 +2335,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${objReplace(name)}${suffix}`;
     }
   );
+  }
 
   } // end opts.objectNames
 
@@ -2369,6 +2468,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   }
 
   // FortiGate: set interface "WAN-MPLS" or set srcintf/dstintf
+  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:device|interface|srcintf|dstintf|associated-interface)\s+)"([^"]+)"/gi,
     (match, prefix, name) => {
@@ -2376,9 +2476,11 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}"${intfReplace(name)}"`;
     }
   );
+  }
 
   // ASA: nameif already handled by zones, but interface descriptions like "WAN-MPLS"
   // SRX: set interfaces <name> unit
+  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(set\s+interfaces\s+)([a-zA-Z][\w-]*[A-Z][\w-]*)(\s)/gi,
     (match, prefix, name, suffix) => {
@@ -2388,8 +2490,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${intfReplace(name)}${suffix}`;
     }
   );
+  }
 
   // PAN-OS: <interface><entry name="WAN-MPLS">
+  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<interface>\s*<entry\s+name=")([^"]+)(")/gi,
     (match, prefix, name, suffix) => {
@@ -2397,6 +2501,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${intfReplace(name)}${suffix}`;
     }
   );
+  }
 
   } // end opts.interfaceNames
 
@@ -2444,8 +2549,6 @@ function restoreConfig(sanitizedText, mappings) {
   // Sort by placeholder length descending to avoid partial matches
   const sorted = [...mappings].sort((a, b) => b.placeholder.length - a.placeholder.length);
   for (const entry of sorted) {
-    // Skip description entries (they all map to "(sanitized)" which is a common placeholder)
-    if (entry.type === 'description') continue;
     // Global replace of placeholder with original
     restored = restored.split(entry.placeholder).join(entry.original);
   }
@@ -3220,7 +3323,10 @@ $('#batchSanitizeBtn').addEventListener('click', () => {
     totalReplacements += result.replacements.length;
   }
 
-  $('#batchStatsBar').innerHTML = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${batchFiles.length} files <span class="count">${totalReplacements} total replacements</span></div>`;
+  const autoSaltChip = !salt
+    ? ` <span class="stat" style="color:var(--warning)" title="Save this salt to reproduce the same anonymization mapping later."><span class="dot" style="background:var(--warning)"></span> Auto-salt used <span class="count">${batchSalt}</span></span>`
+    : '';
+  $('#batchStatsBar').innerHTML = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${batchFiles.length} files <span class="count">${totalReplacements} total replacements</span></div>${autoSaltChip}`;
   $('#batchResults').classList.remove('hidden');
 });
 
