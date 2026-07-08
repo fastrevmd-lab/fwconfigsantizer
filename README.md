@@ -2,6 +2,8 @@
 
 A portable, browser-based tool that sanitizes firewall configurations by replacing sensitive and identifiable information with safe placeholders. Runs 100% client-side — no data leaves your machine.
 
+Unofficial / community project. Not affiliated with, endorsed by, or supported by Juniper Networks, Palo Alto Networks, Fortinet, Cisco, or Check Point. See [License and Provenance](#license-and-provenance) for the full notice and the trademark disclaimer.
+
 ![Firewall Config Sanitizer screenshot](screenshot.png)
 
 ## Usage
@@ -86,3 +88,17 @@ Vendor is auto-detected and only the relevant sanitization rules are applied, re
 ## Mapping File
 
 The mapping file is a JSON document containing every replacement made during sanitization. Keep it secure — it contains the original sensitive values needed to reverse the sanitization. If a salt was used, it is recorded in the mapping file metadata.
+
+## License and Provenance
+
+### Community Project Notice
+
+> **Unofficial / community project.** Not affiliated with, endorsed by, or supported by Juniper Networks, Palo Alto Networks, Fortinet, Cisco, or Check Point Software Technologies.
+
+### Trademark Disclaimer
+
+This repository is an independent, community-driven project. It is not affiliated with, endorsed by, sponsored by, or supported by Juniper Networks, Palo Alto Networks, Fortinet, Cisco, or Check Point Software Technologies. The terms "Juniper," "Junos," "SRX," "PAN-OS," "Palo Alto Networks," "FortiGate," "FortiOS," "Fortinet," "Cisco," and "Check Point" are trademarks of their respective owners and are used here only to describe what this software interoperates with. Please direct support and licensing questions about those products to the respective vendors.
+
+### License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for full terms.
