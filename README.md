@@ -14,7 +14,9 @@ A portable, browser-based tool that sanitizes firewall configurations by replaci
 
 > **Unofficial / community project.** Not affiliated with, endorsed by, or supported by Juniper Networks, Palo Alto Networks, Fortinet, Cisco, or Check Point. See [License and Provenance](#license-and-provenance) for the full notice and the trademark disclaimer.
 
-![Firewall Config Sanitizer screenshot](screenshot.png)
+![The sanitizer — paste or upload a config, toggle categories, one Sanitize action](docs/assets/app-sanitize.png)
+
+![What gets sanitized — the category cards and the risk disclaimer](docs/assets/app-categories.png)
 
 ## Usage
 
