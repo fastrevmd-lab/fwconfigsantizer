@@ -1,8 +1,18 @@
-# Firewall Config Sanitizer
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mechub-mark.svg">
+    <img src="docs/assets/mechub-mark-light.svg" width="72" alt="mechub mark">
+  </picture>
+</p>
+
+<h1 align="center">fwconfigsanitizer</h1>
+
+<p align="center"><strong>Firewall config sanitizer — browser-based, 100% client-side</strong><br>
+<em>a mechub project — sovereign network-security automation</em></p>
 
 A portable, browser-based tool that sanitizes firewall configurations by replacing sensitive and identifiable information with safe placeholders. Runs 100% client-side — no data leaves your machine.
 
-Unofficial / community project. Not affiliated with, endorsed by, or supported by Juniper Networks, Palo Alto Networks, Fortinet, Cisco, or Check Point. See [License and Provenance](#license-and-provenance) for the full notice and the trademark disclaimer.
+> **Unofficial / community project.** Not affiliated with, endorsed by, or supported by Juniper Networks, Palo Alto Networks, Fortinet, Cisco, or Check Point. See [License and Provenance](#license-and-provenance) for the full notice and the trademark disclaimer.
 
 ![Firewall Config Sanitizer screenshot](screenshot.png)
 
@@ -102,3 +112,14 @@ This repository is an independent, community-driven project. It is not affiliate
 ### License
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE) for full terms.
+
+---
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mechub-mark.svg">
+    <img src="docs/assets/mechub-mark-light.svg" width="28" alt="">
+  </picture><br>
+  <sub><code>a mechub project</code> · deterministic decides · the model explains · a human approves<br>
+  <a href="https://github.com/fastrevmd-lab">github.com/fastrevmd-lab</a></sub>
+</p>
