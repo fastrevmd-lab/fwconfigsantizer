@@ -113,7 +113,7 @@ This repository is an independent, community-driven project. It is not affiliate
 
 ### License
 
-This project is licensed under the MIT License — see [LICENSE](LICENSE) for full terms.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE), at your option.
 
 ---
 
