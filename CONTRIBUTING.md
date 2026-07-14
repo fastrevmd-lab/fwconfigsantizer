@@ -21,7 +21,7 @@ Open a [GitHub Issue](../../issues) with:
 4. Ensure no regressions in existing categories (paste a sample config, check output)
 5. Open a PR against `main` with a clear description of what changed and why
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Unless explicitly stated otherwise, contributions submitted for inclusion in this project are licensed under the [MIT License](LICENSE).
 
 ## Architecture Notes
 
