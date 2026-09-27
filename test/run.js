@@ -17,21 +17,29 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadEngine } = require('./extract-engine');
+const { loadEngine, INDEX_HTML_PATH } = require('./extract-engine');
 const { cases } = require('./cases');
 const { makeCrossCuttingCases, DEFAULT_SALT } = require('./cross-cutting');
 
 function runStandardCase(engine, testCase) {
   const result = engine.sanitizeConfig(testCase.input, {}, DEFAULT_SALT, []);
   const leaked = testCase.leakTokens.filter((tok) => result.sanitizedText.includes(tok));
-  const actualStatus = leaked.length > 0 ? 'FAIL' : 'PASS';
+  // mustSurvive (optional): text that must remain verbatim in the output, so
+  // a "fix" that deletes the whole line instead of surgically redacting it
+  // doesn't count as passing (see case 18: the `syslog host` keyword must
+  // survive even after the hostname argument is redacted).
+  const missingSurvivors = (testCase.mustSurvive || []).filter((tok) => !result.sanitizedText.includes(tok));
+  const actualStatus = leaked.length > 0 || missingSurvivors.length > 0 ? 'FAIL' : 'PASS';
+  const detailParts = [];
+  if (leaked.length > 0) detailParts.push(`leaked: ${leaked.map((t) => JSON.stringify(t)).join(', ')}`);
+  if (missingSurvivors.length > 0) detailParts.push(`missing required text: ${missingSurvivors.map((t) => JSON.stringify(t)).join(', ')}`);
   return {
     id: testCase.id,
     group: testCase.group,
     description: testCase.description,
     expected: testCase.expected,
     actualStatus,
-    detail: leaked.length > 0 ? `leaked: ${leaked.map((t) => JSON.stringify(t)).join(', ')}` : 'all tokens redacted',
+    detail: detailParts.length > 0 ? detailParts.join('; ') : 'all tokens redacted',
     sanitizedText: result.sanitizedText,
     replacements: result.replacements,
   };
@@ -71,10 +79,11 @@ function main() {
   const mdOut = mdOutIdx !== -1 ? args[mdOutIdx + 1] : null;
 
   const { engine, startLineNo, endLineNo } = loadEngine();
+  const indexHtmlSource = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
 
   const standardResults = cases.map((c) => runStandardCase(engine, c));
 
-  const crossCutting = makeCrossCuttingCases(engine);
+  const crossCutting = makeCrossCuttingCases(engine, indexHtmlSource);
 
   // Case 100 needs sanitizedText+replacements from every sanitizeConfig call
   // in the corpus. Cases 1-94 already have that; cases 96/97 also call

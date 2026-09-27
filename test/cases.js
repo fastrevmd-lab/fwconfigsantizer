@@ -165,6 +165,7 @@ const cases = [
     description: 'syslog host syslog.fakeorg.lan any any (the host keyword must survive)',
     input: junos('set system syslog host syslog.fakeorg.lan any any;\n'),
     leakTokens: ['syslog.fakeorg.lan'],
+    mustSurvive: ['syslog host '],
   },
   {
     id: 19, group: 'junos-set', expected: 'FAIL',
