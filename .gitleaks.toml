@@ -1,0 +1,14 @@
+title = "fwconfigsantizer gitleaks config"
+
+[extend]
+useDefault = true
+
+# test/cases.js (H3a fixture suite, MEC-13) embeds synthetic PEM-shaped
+# fixtures so the sanitizer's private-key-redaction rule has something to
+# exercise. "FAKEKEYDATA88" is not real key material -- it trips the default
+# `private-key` rule purely on the PEM header shape. Scoped to that literal
+# token in that one file so a real key added anywhere else still alerts.
+[allowlist]
+description = "Synthetic OPENSSH private-key fixture in the fwconfigsantizer regression suite (not a real secret)"
+paths = ['''^test/cases\.js$''']
+regexes = ['''FAKEKEYDATA88''']
