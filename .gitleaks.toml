@@ -3,12 +3,23 @@ title = "fwconfigsantizer gitleaks config"
 [extend]
 useDefault = true
 
-# test/cases.js (H3a fixture suite, MEC-13) embeds synthetic PEM-shaped
-# fixtures so the sanitizer's private-key-redaction rule has something to
-# exercise. "FAKEKEYDATA88" is not real key material -- it trips the default
-# `private-key` rule purely on the PEM header shape. Scoped to that literal
-# token in that one file so a real key added anywhere else still alerts.
-[allowlist]
-description = "Synthetic OPENSSH private-key fixture in the fwconfigsantizer regression suite (not a real secret)"
+# MEC-13: commit 7458b76 (the original H3a fixture-suite commit) labelled
+# case 88's synthetic PEM fixture with a bare "-----BEGIN OPENSSH PRIVATE
+# KEY-----" description line. That redundant header text (not the fixture's
+# actual body, which is the literal string "FAKEKEYDATA88" -- no real key
+# material) is what the default `private-key` rule matched on
+# test/cases.js:680. The description was relabelled in a later commit so
+# the fixture no longer trips the rule at all, but gitleaks scans full PR
+# history (fetch-depth: 0), so the original commit's now-superseded finding
+# still needs an explicit exception. This exception is pinned to that one
+# rule, that one commit, and that one path (AND semantics) -- it does not
+# exempt test/cases.js from any other rule, and a real secret added to this
+# file in a later commit still alerts (verified locally: a negative-control
+# PEM block added to test/cases.js in a follow-up commit was flagged).
+[[rules]]
+id = "private-key"
+[[rules.allowlists]]
+description = "MEC-13 synthetic PEM-header label in 7458b76 (case 88), relabelled in a later commit"
+condition = "AND"
+commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
 paths = ['''^test/cases\.js$''']
-regexes = ['''FAKEKEYDATA88''']

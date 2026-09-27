@@ -677,7 +677,7 @@ const cases = [
   },
   {
     id: 88, group: 'asa-ios', expected: 'FAIL',
-    description: '-----BEGIN OPENSSH PRIVATE KEY-----',
+    description: 'Embedded OPENSSH private-key PEM block',
     input: asa('crypto key generate rsa\n! embedded key material below\n-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEKEYDATA88\n-----END OPENSSH PRIVATE KEY-----\n'),
     leakTokens: ['FAKEKEYDATA88'],
   },
