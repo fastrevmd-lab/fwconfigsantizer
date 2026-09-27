@@ -2,3 +2,51 @@ title = "fwconfigsantizer gitleaks config"
 
 [extend]
 path = ".gitleaks-vendor.toml"
+
+# MEC-13: commit 7458b76 (the original H3a fixture-suite commit, added in
+# PR #4) labelled case 88's synthetic PEM fixture with a bare "-----BEGIN
+# OPENSSH PRIVATE KEY-----" description line. That redundant header text
+# (not the fixture's actual body, which is the literal string
+# "FAKEKEYDATA88" -- no real key material) is what the default
+# `private-key` rule matched on test/cases.js:680. The description was
+# relabelled in a later commit so the fixture no longer trips the rule at
+# all, but gitleaks scans full PR history (fetch-depth: 0), so the original
+# commit's now-superseded finding still needs an explicit exception. This
+# exception is pinned to that one rule, that one commit, and that one path
+# (AND semantics) -- it does not exempt test/cases.js from any other rule.
+[[rules]]
+id = "private-key"
+[[rules.allowlists]]
+description = "MEC-13 synthetic PEM-header label in 7458b76 (case 88), relabelled in a later commit"
+condition = "AND"
+commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
+paths = ['''^test/cases\.js$''']
+
+# The two vendor rules below (added by this PR, MEC-30) are not in gitleaks'
+# default ruleset, so PR #4's test fixtures were never checked against them
+# and both fire on synthetic values in test/cases.js. Each allowlist is
+# scoped to the exact fixture text (or, where that's not possible, to the
+# one historical commit + path), not the whole file -- a real secret added
+# to test/cases.js in a later commit still alerts.
+[[rules]]
+id = "junos-type9-secret"
+[[rules.allowlists]]
+description = "synthetic $9$FAKE* fixtures in the sanitizer test suite"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "match"
+regexes = ['''^\$9\$FAKE[A-Za-z0-9]*$''']
+
+[[rules]]
+id = "pem-private-key"
+[[rules.allowlists]]
+description = "synthetic case-88 PEM header (body is literal FAKEKEYDATA88)"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "line"
+regexes = ['''FAKEKEYDATA88''']
+[[rules.allowlists]]
+description = "MEC-13 pre-relabel description line in 7458b76"
+condition = "AND"
+commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
+paths = ['''^test/cases\.js$''']
