@@ -19,3 +19,6 @@ Desktop.ini
 
 # Codex isolated worktrees
 .worktrees/
+
+# Fixture-suite reports (CI artifact only, never committed)
+test/reports/
