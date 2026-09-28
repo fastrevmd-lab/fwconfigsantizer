@@ -17,6 +17,7 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const vm = require('node:vm');
 
 const DEFAULT_SALT = 'h3a-fixture-salt';
 
@@ -75,13 +76,14 @@ function makeCrossCuttingCases(engine, indexHtmlSource) {
 // firewall config).
 function case95(engine, indexHtmlSource) {
   const saltExpr = extractBatchSaltExpr(indexHtmlSource);
-  // eslint-disable-next-line no-new-func -- evaluates the actual fallback
-  // expression pulled from index.html (with `Date` shadowed by a candidate
-  // timestamp), compiled once outside the brute-force loop below. A real
-  // fix to the formula changes what this brute-force targets, instead of
-  // always attacking a hardcoded copy of the old weak formula.
-  const evalSaltExpr = new Function('Date', `return (${saltExpr});`);
-  const saltForTimestamp = (ts) => evalSaltExpr({ now: () => ts });
+  // Evaluates the actual fallback expression pulled from index.html (with
+  // `Date` shadowed by a candidate timestamp) in an empty vm context, not the
+  // main realm -- consistent with how the extracted engine itself runs, with
+  // no `process`/`fetch`/`globalThis` in scope. A real fix to the formula
+  // changes what this brute-force targets, instead of always attacking a
+  // hardcoded copy of the old weak formula.
+  const saltForTimestamp = (ts) =>
+    vm.runInNewContext(`(${saltExpr})`, { Date: { now: () => ts } });
 
   const secretTimestamp = Date.now() - 90_000; // "unknown" run time, within the search window
   const secretSalt = saltForTimestamp(secretTimestamp);
@@ -183,9 +185,9 @@ function case99(indexHtmlSource) {
   const loadedFilename = 'FAKEHOST-fw01-99.cfg';
   const ext = loadedFilename.split('.').pop();
   const baseName = loadedFilename.replace(/\.[^.]+$/, '');
-  // eslint-disable-next-line no-new-func -- renders the actual template
-  // string extracted from index.html, with only baseName/ext in scope.
-  const outputFilename = new Function('baseName', 'ext', `return \`${template}\`;`)(baseName, ext);
+  // Renders the actual template string extracted from index.html in an empty
+  // vm context, with only baseName/ext in scope.
+  const outputFilename = vm.runInNewContext(`\`${template}\``, { baseName, ext });
   const leaksBaseName = outputFilename.includes(baseName);
   return {
     id: 99, group: 'cross-cutting', expected: 'FAIL',

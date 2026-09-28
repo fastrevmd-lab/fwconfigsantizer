@@ -1,8 +1,8 @@
 'use strict';
 // Extracts the sanitizer engine from index.html and loads it into an isolated
-// vm context, without modifying index.html. The engine (currently
-// index.html:1386-3034) is plain functions with no DOM/browser globals, so it
-// can run unmodified under Node's vm module.
+// vm context, without modifying index.html. The engine block is plain
+// functions with no DOM/browser globals, so it can run unmodified under
+// Node's vm module.
 //
 // The line range is re-derived from the marker comments every run so that if
 // the engine ever moves, extraction fails loudly instead of silently slicing
@@ -22,11 +22,13 @@ function loadEngineSource() {
   const lines = html.split('\n');
 
   const startIdx = lines.findIndex((l) => l.includes(ENGINE_START_MARKER));
-  const endIdx = lines.findIndex((l) => l.includes(ENGINE_END_MARKER));
-  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+  const endIdx = lines.findIndex((l, i) => i > startIdx && l.includes(ENGINE_END_MARKER));
+  const endMarkerCount = lines.filter((l) => l.includes(ENGINE_END_MARKER)).length;
+  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx || endMarkerCount !== 1) {
     throw new Error(
-      `Could not locate engine markers in index.html (start=${startIdx}, end=${endIdx}). ` +
-      'The engine block markers may have moved or been renamed.'
+      `Could not locate engine markers in index.html (start=${startIdx}, end=${endIdx}, ` +
+      `endMarkerCount=${endMarkerCount}). The engine block markers may have moved, been ` +
+      'renamed, or become ambiguous.'
     );
   }
 
