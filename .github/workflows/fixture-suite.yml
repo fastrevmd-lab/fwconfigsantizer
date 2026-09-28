@@ -1,0 +1,44 @@
+name: fixture-suite
+
+# Runs the fwconfigsantizer regression suite on every PR. Actions pinned to
+# commit SHAs. The harness extracts the sanitizer engine from index.html
+# (unmodified) and runs it against 100 synthetic fixtures; it fails the job
+# only when a case's result no longer matches the recorded expectation in
+# test/cases.js (a regression or an undocumented fix), not on every known
+# failure. See test/run.js for details.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fixture-suite-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixtures:
+    name: fixture suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Run fixture suite
+        run: node test/run.js --json test/reports/report.json --md test/reports/report.md
+
+      - name: Upload fixture report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fixture-suite-report
+          path: test/reports/
+          retention-days: 30

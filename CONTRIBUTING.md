@@ -39,7 +39,21 @@ Unless explicitly stated otherwise, contributions submitted for inclusion in thi
 
 ## Testing
 
-There is no automated test suite. Testing is manual:
+`test/` holds a Node regression suite that extracts the sanitizer engine from
+`index.html` (unmodified) and runs it against 100 synthetic fixtures. It has
+no dependencies beyond Node itself:
+
+```
+node test/run.js
+```
+
+The suite records each case's known status in `test/cases.js`; it fails the
+job only when a case's actual result no longer matches that record (a
+regression, or an undocumented fix that should update the record), not on
+every currently-known gap. `test/` is dev tooling only — it doesn't change
+`index.html` or introduce a build step for the app itself.
+
+Beyond that, testing is manual:
 
 1. Open `index.html` in a browser
 2. Paste or upload a sample config for the vendor you're targeting
