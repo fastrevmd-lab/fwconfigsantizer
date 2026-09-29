@@ -1391,8 +1391,12 @@ html.light .warnings-panel {
 
 /**
  * Detect the firewall vendor from config text.
+ * Junos XML display output ("<configuration>...") is checked before PAN-OS
+ * XML ("<config ...>...") because "<configuration" contains "<config" as a
+ * literal substring -- checking PAN-OS first misclassified every Junos XML
+ * export as PAN-OS.
  * @param {string} text
- * @returns {'asa'|'fortigate'|'panos'|'srx'|'unknown'}
+ * @returns {'asa'|'fortigate'|'panos'|'srx'|'checkpoint'|'unknown'}
  */
 function detectVendor(text) {
   const sample = text.substring(0, 5000).toLowerCase();
@@ -1401,13 +1405,18 @@ function detectVendor(text) {
       sample.includes('set srcintf') || sample.includes('set dstintf')) {
     return 'fortigate';
   }
+  // Junos: set-style, curly-brace-style, and XML display output. Must be
+  // checked before the PAN-OS "<config" probe below.
+  if (sample.includes('<configuration') || sample.includes('junos:commit-seq') ||
+      sample.includes('xmlns:junos') ||
+      sample.includes('set security policies') || sample.includes('set security zones') ||
+      sample.includes('from-zone') || sample.includes('to-zone') ||
+      sample.includes('set interfaces') || sample.includes('security-zone')) {
+    return 'srx';
+  }
   if (sample.includes('<config') || sample.includes('<vsys') ||
       sample.includes('<rulebase') || sample.includes('<entry name=')) {
     return 'panos';
-  }
-  if (sample.includes('set security policies') || sample.includes('set security zones') ||
-      sample.includes('from-zone') || sample.includes('set interfaces')) {
-    return 'srx';
   }
   if (sample.includes('asa version') || sample.includes('access-list') ||
       sample.includes('nameif') || sample.includes('access-group') ||
@@ -1432,6 +1441,19 @@ function detectVendor(text) {
     if (cpScore >= 3) return 'checkpoint';
   }
   return 'unknown';
+}
+
+/**
+ * Rough confidence label for the detectVendor() result, so the UI can warn
+ * the user when vendor-specific rules (zones, object names, interfaces) may
+ * not fire because the config didn't match any vendor's marker text. The
+ * vendor-independent structural rules (credentials, SNMP, BGP, hostnames,
+ * generic FQDN/DN/PEM/MAC passes) run regardless of this result.
+ * @param {'asa'|'fortigate'|'panos'|'srx'|'checkpoint'|'unknown'} vendor
+ * @returns {'high'|'low'}
+ */
+function detectionConfidence(vendor) {
+  return vendor === 'unknown' ? 'low' : 'high';
 }
 
 /**
@@ -1478,6 +1500,27 @@ function isSubnetMask(ip) {
     '255.255.255.248', '255.255.255.252', '255.255.255.254', '255.255.255.255',
   ]);
   return MASKS.has(ip);
+}
+
+/**
+ * RFC 5737 documentation ranges (also the ranges anonymizeIP's "public"
+ * branch synthesizes output into) and the RFC 2544 benchmarking range. These
+ * addresses never identify a real network, so sanitizeConfig passes them
+ * through unchanged instead of anonymizing them -- anonymizing an address
+ * that already lives in the *same* output space it could land in again risks
+ * the anonymized value containing the original as a literal substring (e.g.
+ * 192.0.2.1 -> 192.0.2.141), which would otherwise trip the residual-original
+ * check.
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isDocumentationIPv4(ip) {
+  const [a, b, c] = ip.split('.').map(Number);
+  if (a === 192 && b === 0 && c === 2) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  return false;
 }
 
 /**
@@ -1576,12 +1619,80 @@ function isDocIPv6(ipv6) {
 }
 
 /**
+ * Depth-aware scan of FortiOS `config ... end` blocks (which nest, e.g.
+ * `config system interface` -> `edit "wan1"` -> `config ipv6` -> `end` ->
+ * `next` -> `end`). Returns the line range of every block whose full
+ * dotted path (parent config names joined by " > ") satisfies pathMatcher,
+ * so a caller can redact `edit "name"` lines that belong directly to that
+ * block without also reaching into a nested sub-block.
+ * @param {string} text
+ * @param {(path: string) => boolean} pathMatcher
+ * @returns {Array<{path: string, startIdx: number, endIdx: number}>}
+ */
+function findFortiBlocks(text, pathMatcher) {
+  const lines = text.split('\n');
+  const stack = [];
+  const blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cfgMatch = lines[i].match(/^\s*config\s+(.+?)\s*$/i);
+    const isEnd = /^\s*end\s*$/i.test(lines[i]);
+    if (cfgMatch) {
+      stack.push({ name: cfgMatch[1].toLowerCase(), startIdx: i });
+    } else if (isEnd && stack.length) {
+      const top = stack.pop();
+      const path = [...stack.map((s) => s.name), top.name].join(' > ');
+      if (pathMatcher(path)) {
+        blocks.push({ path, startIdx: top.startIdx, endIdx: i });
+      }
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Redact `edit "name"` (or `edit N`) lines inside every FortiOS config block
+ * whose path matches isTargetPath, skipping numeric indices (SNMP
+ * community/user table rows) and skipping lines that belong to a further
+ * nested config block (tracked via a per-block depth counter) so a fix here
+ * can't reach past its own block into an unrelated nested one.
+ * @param {string} text
+ * @param {(path: string) => boolean} isTargetPath
+ * @param {(name: string) => string} classify - returns a placeholder for name
+ * @returns {string}
+ */
+function redactFortiEditBlocks(text, isTargetPath, classify) {
+  const lines = text.split('\n');
+  const blocks = findFortiBlocks(text, isTargetPath);
+  for (const block of blocks) {
+    let depth = 0;
+    for (let i = block.startIdx + 1; i < block.endIdx; i++) {
+      const line = lines[i];
+      if (/^\s*config\s+/i.test(line)) { depth++; continue; }
+      if (/^\s*end\s*$/i.test(line)) { depth--; continue; }
+      if (depth !== 0) continue;
+      const m = line.match(/^(\s*edit\s+)("(?:[^"\\]|\\.)*"|\S+)(.*)$/i);
+      if (!m) continue;
+      const raw = m[2];
+      const quoted = raw.startsWith('"');
+      const name = quoted ? raw.slice(1, -1) : raw;
+      if (/^\d+$/.test(name)) continue; // numeric table index, not identifying
+      if (name.startsWith('REDACTED_') || name.startsWith('user-') || name.startsWith('obj-')) continue;
+      const replacement = classify(name);
+      if (replacement) {
+        lines[i] = m[1] + (quoted ? `"${replacement}"` : replacement) + m[3];
+      }
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
  * Sanitize a firewall configuration, replacing all identifiable information.
  * @param {string} configText - Raw firewall config
  * @param {object} [options] - Toggle individual sanitization categories
  * @param {string} [salt] - Optional salt for deterministic anonymization
  * @param {string[]} [customWords] - Optional list of custom words to redact
- * @returns {{ sanitizedText: string, replacements: Array, stats: object, vendor: string }}
+ * @returns {{ sanitizedText: string, replacements: Array, stats: object, vendor: string, vendorConfidence: string, residualLeaks: Array }}
  */
 function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (!configText || typeof configText !== 'string') {
@@ -1594,6 +1705,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     objectNames: true, credentials: true, usernames: true, snmp: true,
     certificates: true, bgp: true, hostnames: true, domains: true,
     emails: true, descriptions: true, sysHostname: true, urls: true, interfaceNames: false,
+    macAddresses: true, serialNumbers: true,
     ...options,
   };
 
@@ -1605,11 +1717,12 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     hash: 0, key: 0, user: 0, publicIp: 0, privateIp: 0, ipv6: 0,
     community: 0, cert: 0, host: 0, bgp: 0, zone: 0,
     objName: 0, description: 0, domain: 0, sysHostname: 0, email: 0,
-    customWord: 0, url: 0, interfaceName: 0,
+    customWord: 0, url: 0, interfaceName: 0, mac: 0, serial: 0, dn: 0,
   };
 
   let sanitized = configText;
   const vendor = detectVendor(configText);
+  const vendorConfidence = detectionConfidence(vendor);
   const isFortigate = vendor === 'fortigate';
   const isPanos = vendor === 'panos';
   const isSrx = vendor === 'srx';
@@ -1623,15 +1736,70 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   const ipv6Map = new Map();
   const zoneMap = new Map();
   const objNameMap = new Map();
+  // Domains and URL hosts share one map/counter so an unrelated domain and
+  // URL host never collide on the same example-N.net placeholder text.
   const domainMap = new Map();
   const usernameMap = new Map();
   const hostnameMap = new Map();
   const emailMap = new Map();
   const customWordMap = new Map();
 
+  // Values learned from a structural context (a hostname declared with
+  // `set system host-name X`, a username from `username X password ...`,
+  // etc.) that must also be scrubbed everywhere else they appear verbatim
+  // -- e.g. a hostname reused in an unrelated syslog filename -- even
+  // though nothing recognises that second occurrence structurally.
+  const learnedValues = [];
+
   // Helper: register a replacement and return the placeholder
   function addReplacement(type, placeholder, original) {
     replacements.push({ type, placeholder, original });
+    return placeholder;
+  }
+
+  function learn(type, placeholder, original) {
+    addReplacement(type, placeholder, original);
+    if (original && original.length >= 4) {
+      learnedValues.push({ original, placeholder });
+    }
+  }
+
+  function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Resolves (and dedups) a domain-like hostname to a shared example-N.net
+  // placeholder, used by both the domain pass and the URL pass so the same
+  // counter/map produces distinct placeholders for unrelated hosts.
+  function resolveDomainPlaceholder(value, type = 'domain') {
+    if (domainMap.has(value)) return domainMap.get(value);
+    const placeholder = `example-${counter.domain++}.net`;
+    domainMap.set(value, placeholder);
+    learn(type, placeholder, value);
+    return placeholder;
+  }
+
+  function resolveHostnamePlaceholder(value) {
+    if (hostnameMap.has(value)) return hostnameMap.get(value);
+    const placeholder = `host-${counter.host++}.example.net`;
+    hostnameMap.set(value, placeholder);
+    learn('hostname', placeholder, value);
+    return placeholder;
+  }
+
+  function resolveUsernamePlaceholder(value) {
+    if (usernameMap.has(value)) return usernameMap.get(value);
+    const placeholder = `user-${counter.user++}`;
+    usernameMap.set(value, placeholder);
+    learn('username', placeholder, value);
+    return placeholder;
+  }
+
+  function resolveObjectNamePlaceholder(value) {
+    if (objNameMap.has(value)) return objNameMap.get(value);
+    const placeholder = `obj-${counter.objName++}`;
+    objNameMap.set(value, placeholder);
+    learn('object_name', placeholder, value);
     return placeholder;
   }
 
@@ -1648,42 +1816,127 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       customWordMap.set(trimmed.toLowerCase(), placeholder);
       addReplacement('custom_word', placeholder, trimmed);
       // Case-insensitive global replace
-      const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escaped = escapeRegex(trimmed);
       sanitized = sanitized.replace(new RegExp(escaped, 'gi'), placeholder);
     }
   }
 
   // -----------------------------------------------------------------------
-  // 1. PASSWORD HASHES
+  // 1. CERTIFICATES / PRIVATE KEYS / CISCO CERT-CHAIN HEX BLOCKS
   // -----------------------------------------------------------------------
+  // Runs early, before the generic FQDN/keyword passes, so base64/hex
+  // certificate bodies can't accidentally feed those later regexes.
+  if (opts.certificates) {
+
+  // Every PEM block type: RSA/EC/DSA/ENCRYPTED PRIVATE KEY, OPENSSH PRIVATE
+  // KEY, CERTIFICATE, PUBLIC KEY, CERTIFICATE REQUEST, etc. The backreference
+  // requires the END label to match the BEGIN label, so it can't merge two
+  // unrelated PEM blocks or run away past the actual END line.
+  sanitized = sanitized.replace(
+    /-----BEGIN ([A-Z0-9 ]+)-----[\s\S]*?-----END \1-----/g,
+    () => {
+      const placeholder = `REDACTED_CERT_${counter.cert++}`;
+      addReplacement('certificate', placeholder, '[PEM BLOCK]');
+      return placeholder;
+    }
+  );
+
+  // XML/element-style key/cert tags
+  sanitized = sanitized.replace(
+    /(<(?:private-key|certificate-key|ssl-key|public-key)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_CERT_${counter.cert++}`;
+      addReplacement('certificate', placeholder, '[CERTIFICATE KEY]');
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Cisco IOS/ASA "crypto ca certificate chain" hex body: a run of indented
+  // lines between "certificate ... <serial>" and a bare "quit".
+  sanitized = sanitized.replace(
+    /(certificate\s+\S+\s+\S+\n)((?:[ \t]+\S.*\n)+)([ \t]*quit\s*)/gi,
+    (match, header, _body, quit) => {
+      const placeholder = `REDACTED_CERT_${counter.cert++}`;
+      addReplacement('certificate', placeholder, '[CERT CHAIN HEX]');
+      return `${header}  ${placeholder}\n${quit}`;
+    }
+  );
+
+  } // end opts.certificates
+
+  // -----------------------------------------------------------------------
+  // 2. STRUCTURAL SECRET / KEY / PASSWORD PASS (vendor-independent)
+  // -----------------------------------------------------------------------
+  // Matches "<keyword> [algorithm/type qualifier] [numeric id] [ENC|7|5|9
+  // prefix] <value>" across every vendor's set/CLI/dbedit syntax. These
+  // regexes are inherently vendor-specific because they key off syntax that
+  // only that vendor emits (an XML tag, a Gaia dbedit ":passwd (...)" form,
+  // an IOS "password 7" marker) -- gating them by detected vendor added
+  // nothing but false negatives when detection guessed wrong or the config
+  // was a mixed/unusual export.
   if (opts.credentials) {
 
-  // XML tag hashes: <phash>, <password-hash>, <encrypted-secret>
-  if (isPanos || runAll) {
+  // XML tag hashes: <phash>, <password-hash>, <encrypted-secret>,
+  // <encrypted-password> (Junos display-xml)
   sanitized = sanitized.replace(
-    /(<(?:phash|password-hash|encrypted-secret)>)([^<]+)(<\/)/gi,
+    /(<(?:phash|password-hash|encrypted-secret|encrypted-password)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
       addReplacement('hash', placeholder, value.trim());
       return `${open}${placeholder}${close}`;
     }
   );
-  }
+
+  // Nested XML keys: <pre-shared-key><key>VALUE</key></pre-shared-key>
+  sanitized = sanitized.replace(
+    /(<(?:pre-shared-key|api-key|auth-key|secret|key)>)\s*(<key>)([^<]+)(<\/key>)/gi,
+    (match, outerOpen, innerOpen, value, innerClose) => {
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value.trim());
+      return `${outerOpen}${innerOpen}${placeholder}${innerClose}`;
+    }
+  );
+
+  // Generic XML element rule: any of these elements wraps a secret value
+  // directly as text content, regardless of vendor.
+  sanitized = sanitized.replace(
+    /(<(?:secret|key|bind-password|authpwd|privpwd|authentication-key|auth-code|password|pre-shared-key|api-key|secret-key)>)([^<]+)(<\/)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // Junos set: pre-shared-key ascii-text|hexadecimal|plain-text-password-value
+  sanitized = sanitized.replace(
+    /(pre-shared-key\s+(?:ascii-text|hexadecimal|plain-text-password-value)\s+)("[^"]+"|\S+)/gi,
+    (match, prefix, value) => {
+      const quoted = value.startsWith('"');
+      const inner = quoted ? value.slice(1, -1) : value;
+      if (inner.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, inner);
+      return `${prefix}${quoted ? `"${placeholder}"` : placeholder}`;
+    }
+  );
 
   // Attribute-style hashes: password "$1$...", secret "$sha1$..."
   sanitized = sanitized.replace(
     /(password|secret|pre-shared-key|auth-key)\s+"(\$[^"]+)"/gi,
     (match, keyword, value) => {
+      if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
       addReplacement('hash', placeholder, value);
       return `${keyword} "${placeholder}"`;
     }
   );
 
-  // FortiGate ENC hashes: set password ENC <base64>
-  if (isFortigate || runAll) {
+  // ASA: enable password/secret, username ... secret, password 7
   sanitized = sanitized.replace(
-    /(set\s+(?:password|passwd|private-key|secret)\s+)(ENC\s+\S+)/gi,
+    /(\benable\s+password\s+)(\S+)/gi,
     (match, prefix, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
@@ -1691,36 +1944,147 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
-  }
-
-  // Check Point dbedit: :passwd ("hash")
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
-    /(:passwd\s+\(")([^"]+)("\))/gi,
-    (match, prefix, value, suffix) => {
+    /(\benable\s+secret\s+)(?:(\d+)\s+)?(\S+)/gi,
+    (match, prefix, algo, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
       addReplacement('hash', placeholder, value);
-      return `${prefix}${placeholder}${suffix}`;
+      return `${prefix}${algo ? algo + ' ' : ''}${placeholder}`;
     }
   );
-  }
-
-  // Check Point Gaia: set user <name> password-hash <hash>
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
-    /(set\s+user\s+\S+\s+password-hash\s+)(\S+)/gi,
-    (match, prefix, value) => {
+    /(\busername\s+\S+\s+secret\s+)(?:(\d+)\s+)?(\S+)/gi,
+    (match, prefix, algo, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
       addReplacement('hash', placeholder, value);
+      return `${prefix}${algo ? algo + ' ' : ''}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bpassword\s+)(7)\s+(\S+)/gi,
+    (match, prefix, marker, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${marker} ${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bkey-string\s+)(?:(7)\s+)?(\S+)/gi,
+    (match, prefix, marker, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${marker ? marker + ' ' : ''}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\btacacs-server\s+host\s+\S+\s+key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
       return `${prefix}${placeholder}`;
     }
   );
-  }
+  sanitized = sanitized.replace(
+    /(\bradius-server\s+key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bcrypto\s+isakmp\s+key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  // ASA: ldap attribute-map ... ldap-login-password <value>
+  sanitized = sanitized.replace(
+    /(\bldap-login-password\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  // ASA: aaa-server FOO (interface) host <ip>\n key <value>
+  sanitized = sanitized.replace(
+    /(aaa-server\s+\S+\s+\([^)]+\)\s+host\s+\S+\n\s*key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bip\s+ospf\s+message-digest-key\s+\d+\s+md5\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bip\s+ospf\s+authentication-key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bneighbor\s+\S+\s+password\s+0\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bntp\s+authentication-key\s+\d+\s+md5\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  // Junos NTP: authentication-key N type md5 value "..."
+  sanitized = sanitized.replace(
+    /(ntp\s+authentication-key\s+\d+\s+type\s+\S+\s+value\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+  // Junos OSPF: authentication md5 <id> key "..."
+  sanitized = sanitized.replace(
+    /(authentication\s+md5\s+\d+\s+key\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
 
   // ASA encrypted passwords: password <hash> encrypted
-  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(password\s+)(\S+)(\s+encrypted)/gi,
     (match, prefix, value, suffix) => {
@@ -1730,41 +2094,75 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
 
-  // -----------------------------------------------------------------------
-  // 2. PRE-SHARED KEYS, API KEYS, SECRETS
-  // -----------------------------------------------------------------------
-  // (still inside opts.credentials guard)
-
-  // Nested XML keys: <pre-shared-key><key>VALUE</key></pre-shared-key>
-  if (isPanos || runAll) {
+  // FortiGate ENC hashes: set password|passwd|private-key|secret|psksecret
+  // ENC <base64>
   sanitized = sanitized.replace(
-    /(<(?:pre-shared-key|api-key|auth-key|secret|key)>)\s*(<key>)([^<]+)(<\/key>)/gi,
-    (match, outerOpen, innerOpen, value, innerClose) => {
-      const placeholder = `REDACTED_KEY_${counter.key++}`;
-      addReplacement('key', placeholder, value.trim());
-      return `${outerOpen}${innerOpen}${placeholder}${innerClose}`;
+    /(set\s+(?:password|passwd|private-key|secret|psksecret|psksecret-remote|ppk-secret|auth-pwd|priv-pwd|api-key)\s+)(ENC\s+\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}`;
     }
   );
-  }
-
-  // Simple XML key tags
-  if (isPanos || runAll) {
+  // FortiGate: set key ENC <base64> (NTP key), set md5-keys N ENC <base64>
   sanitized = sanitized.replace(
-    /(<(?:pre-shared-key|api-key|auth-key|secret-key)>)([^<]+)(<\/)/gi,
-    (match, open, value, close) => {
-      if (value.trim().startsWith('REDACTED_')) return match;
-      const placeholder = `REDACTED_KEY_${counter.key++}`;
-      addReplacement('key', placeholder, value.trim());
-      return `${open}${placeholder}${close}`;
+    /(set\s+(?:key|md5-keys)\s+(?:\d+\s+)?)(ENC\s+\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}`;
     }
   );
-  }
 
-  // Set-format secrets (quoted)
+  // Check Point dbedit: :passwd ("hash")
   sanitized = sanitized.replace(
-    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password)\s+)"([^"]+)"/gi,
+    /(:passwd\s+\(")([^"]+)("\))/gi,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+
+  // Check Point Gaia: set user <name> password-hash <hash> /
+  // set expert-password-hash <hash>
+  sanitized = sanitized.replace(
+    /(set\s+user\s+\S+\s+password-hash\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(set\s+expert-password-hash\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_HASH_${counter.hash++}`;
+      addReplacement('hash', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  // Check Point: auth-pass-phrase / privacy-pass-phrase
+  sanitized = sanitized.replace(
+    /(set\s+snmp\s+usm\s+(?:auth-pass-phrase|privacy-pass-phrase)\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // Set-format secrets (quoted): password, passwd, secret,
+  // secondary-secret, auth-password, privacy-password, psksecret
+  sanitized = sanitized.replace(
+    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password|psksecret|psksecret-remote|ppk-secret|auth-pwd|priv-pwd|api-key)\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
@@ -1775,12 +2173,26 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
 
   // Set-format secrets (unquoted, excluding already handled ENC)
   sanitized = sanitized.replace(
-    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password)\s+)(\S+)/gi,
+    /(set\s+(?:password|passwd|secret|secondary-secret|auth-password|privacy-password|psksecret|psksecret-remote|ppk-secret|auth-pwd|priv-pwd|api-key)\s+)(\S+)/gi,
     (match, prefix, value) => {
       if (value.startsWith('REDACTED_') || value === '"' || value.startsWith('ENC')) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
       addReplacement('key', placeholder, value);
       return `${prefix}${placeholder}`;
+    }
+  );
+
+  // authentication-key / privacy-key / auth-key (quoted and unquoted) --
+  // covers Junos "authentication-key \"$9$...\";", SNMPv3
+  // "authentication-key \"$9$...\"", ASA "ip ospf authentication-key FOO"
+  // (handled above), etc.
+  sanitized = sanitized.replace(
+    /((?:authentication-key|privacy-key)\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}"${placeholder}"`;
     }
   );
 
@@ -1796,7 +2208,6 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // Check Point SIC keys: :sic_name ("...") and :ica_cert_req ("...")
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(:(?:sic_name|ica_cert_req)\s+\(")([^"]+)("\))/gi,
     (match, prefix, value, suffix) => {
@@ -1806,32 +2217,53 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
 
-  // ASA: tunnel-group ... ipsec-attributes + ikev1 pre-shared-key
-  if (isAsa || runAll) {
+  // PAN-OS set-CLI: set ... pre-shared-key key <value> (redact the value,
+  // not the "key" keyword itself). Must run before the ASA ikev1/2 rule
+  // below, which would otherwise treat the literal word "key" as if it
+  // were the secret value and leave the real value untouched.
   sanitized = sanitized.replace(
-    /((?:ikev[12]\s+)?pre-shared-key\s+)(\S+)/gi,
+    /(pre-shared-key\s+key\s+)(\S+)/gi,
     (match, prefix, value) => {
-      if (value.startsWith('REDACTED_') || value === '<' || value === '{') return match;
+      if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
       addReplacement('key', placeholder, value);
       return `${prefix}${placeholder}`;
     }
   );
-  }
+
+  // ASA: (ikev1|ikev2) pre-shared-key <value>
+  sanitized = sanitized.replace(
+    /((?:ikev[12]\s+)?pre-shared-key\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_') || value === '<' || value === '{' || value === 'key') return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // License keys / auth codes
+  sanitized = sanitized.replace(
+    /(license\s+keys?\s+key\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
 
   } // end opts.credentials
 
   // -----------------------------------------------------------------------
-  // 3. SNMP COMMUNITIES
+  // 3. SNMP COMMUNITIES / LOCATION / CONTACT (vendor-independent)
   // -----------------------------------------------------------------------
   if (opts.snmp) {
 
-  // XML
-  if (isPanos || runAll) {
+  // XML: <community>, <snmp-community-string>
   sanitized = sanitized.replace(
-    /(<community>)([^<]+)(<\/community>)/gi,
+    /(<(?:community|snmp-community-string)>)([^<]+)(<\/(?:community|snmp-community-string)>)/gi,
     (match, open, value, close) => {
       if (value.trim().startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
@@ -1839,7 +2271,38 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${open}${placeholder}${close}`;
     }
   );
-  }
+  // Nested: <community><name>X</name></community>
+  sanitized = sanitized.replace(
+    /(<community>\s*<name>)([^<]+)(<\/name>)/gi,
+    (match, open, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // XML: <location>, <contact>
+  sanitized = sanitized.replace(
+    /(<(location|contact)>)([^<]+)(<\/\2>)/gi,
+    (match, open, tag, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_SNMP_${counter.community++}`;
+      addReplacement('snmp', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // PAN-OS set-CLI: set deviceconfig ... snmp-community-string <name>
+  sanitized = sanitized.replace(
+    /(snmp-community-string\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
 
   // ASA/FortiGate/SRX: snmp-server community <name>
   sanitized = sanitized.replace(
@@ -1851,9 +2314,45 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  // ASA/IOS: snmp-server host <ip> community <name> [version ...]
+  sanitized = sanitized.replace(
+    /(snmp-server\s+host\s+\S+\s+community\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  // ASA/IOS: snmp-server user <name> <group> v3 auth sha <val> priv aes N <val>
+  sanitized = sanitized.replace(
+    /(\bauth\s+sha\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_SNMP_${counter.community++}`;
+      addReplacement('snmp', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(\bpriv\s+aes\s+\d+\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_SNMP_${counter.community++}`;
+      addReplacement('snmp', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(snmp-server\s+user\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_') || value.startsWith('user-')) return match;
+      const placeholder = resolveUsernamePlaceholder(value);
+      return `${prefix}${placeholder}`;
+    }
+  );
 
-  // SRX/Junos: set snmp community <name>
-  if (isSrx || runAll) {
+  // SRX/Junos/Check Point Gaia: set snmp community <name>
   sanitized = sanitized.replace(
     /(set\s+snmp\s+community\s+)(\S+)/gi,
     (match, prefix, value) => {
@@ -1863,23 +2362,41 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
-  }
 
-  // Check Point Gaia: set snmp community <name>
-  if (isCheckpoint || runAll) {
+  // Junos/Check Point set: set snmp location|contact "..."
   sanitized = sanitized.replace(
-    /(set\s+snmp\s+community\s+)(\S+)/gi,
+    /(set\s+snmp\s+(?:location|contact)\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_SNMP_${counter.community++}`;
+      addReplacement('snmp', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // FortiOS: set location|contact-info "..."
+  sanitized = sanitized.replace(
+    /(set\s+(?:location|contact-info)\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_SNMP_${counter.community++}`;
+      addReplacement('snmp', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // FortiOS SNMP community/user table row name: set name "..."
+  sanitized = sanitized.replace(
+    /(set\s+name\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
       addReplacement('community', placeholder, value);
-      return `${prefix}${placeholder}`;
+      return `${prefix}"${placeholder}"`;
     }
   );
-  }
 
   // Check Point dbedit: :snmp_community ("name")
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(:snmp_community\s+\(")([^"]+)("\))/gi,
     (match, prefix, value, suffix) => {
@@ -1889,293 +2406,243 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
+
+  // Junos curly: snmp { community FAKECOMM { ... } }
+  sanitized = sanitized.replace(
+    /(\bcommunity\s+)(\S+)(\s*\{)/g,
+    (match, prefix, value, suffix) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_COMMUNITY_${counter.community++}`;
+      addReplacement('community', placeholder, value);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
 
   } // end opts.snmp
 
   // -----------------------------------------------------------------------
-  // 4. USERNAMES
+  // 4. USERNAMES (vendor-independent, feeds the learned-value map)
   // -----------------------------------------------------------------------
   if (opts.usernames) {
 
   // XML auth context tags
-  if (isPanos || runAll) {
   sanitized = sanitized.replace(
-    /(<(?:admin-username|radius-username|tacplus-username|ldap-bind-dn)>)([^<]+)(<\/)/gi,
+    /(<(?:admin-username|radius-username|tacplus-username|ldap-bind-dn|v3-user)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
       const trimmed = value.trim();
       if (trimmed === 'admin' || trimmed.startsWith('REDACTED_')) return match;
-      let placeholder = usernameMap.get(trimmed);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(trimmed, placeholder);
-        addReplacement('username', placeholder, trimmed);
-      }
+      const placeholder = resolveUsernamePlaceholder(trimmed);
       return `${open}${placeholder}${close}`;
     }
   );
-  }
 
-  // PAN-OS: <users><entry name="xxx">
-  if (isPanos || runAll) {
+  // Junos XML display: <user><name>X</name>
+  sanitized = sanitized.replace(
+    /(<user>\s*<name>)([^<]+)(<\/name>)/gi,
+    (match, open, value, close) => {
+      const trimmed = value.trim();
+      if (trimmed === 'admin' || trimmed.startsWith('REDACTED_') || trimmed.startsWith('user-')) return match;
+      const placeholder = resolveUsernamePlaceholder(trimmed);
+      return `${open}${placeholder}${close}`;
+    }
+  );
+
+  // PAN-OS: <entry name="xxx"> immediately followed by auth-ish children
   sanitized = sanitized.replace(
     /(<entry\s+name=")([^"]+)("(?:[^>]*)>\s*(?:<phash|<password|<permissions))/gi,
     (match, prefix, name, suffix) => {
       if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
-      let placeholder = usernameMap.get(name);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(name, placeholder);
-        addReplacement('username', placeholder, name);
-      }
+      const placeholder = resolveUsernamePlaceholder(name);
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
 
-  // ASA: username <name> password/privilege
-  if (isAsa || runAll) {
+  // ASA: username <name> password|privilege|attributes|secret
   sanitized = sanitized.replace(
-    /(username\s+)(\S+)(\s+(?:password|privilege|attributes))/gi,
+    /(username\s+)(\S+)(\s+(?:password|privilege|attributes|secret))/gi,
     (match, prefix, name, suffix) => {
       if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
-      let placeholder = usernameMap.get(name);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(name, placeholder);
-        addReplacement('username', placeholder, name);
-      }
+      const placeholder = resolveUsernamePlaceholder(name);
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
 
-  // FortiGate: config system admin → edit "admin_name"
-  if (isFortigate || runAll) {
-  sanitized = sanitized.replace(
-    /(config\s+system\s+admin[\s\S]*?edit\s+)"([^"]+)"/gi,
-    (match, prefix, name) => {
-      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
-      let placeholder = usernameMap.get(name);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(name, placeholder);
-        addReplacement('username', placeholder, name);
-      }
-      return `${prefix}"${placeholder}"`;
-    }
-  );
-  }
-
-  // SRX: set system login user <name>
-  if (isSrx || runAll) {
+  // Junos set: set system login user <name>
   sanitized = sanitized.replace(
     /(set\s+system\s+login\s+user\s+)(\S+)/gi,
     (match, prefix, name) => {
       if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
-      let placeholder = usernameMap.get(name);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(name, placeholder);
-        addReplacement('username', placeholder, name);
-      }
+      const placeholder = resolveUsernamePlaceholder(name);
       return `${prefix}${placeholder}`;
     }
   );
-  }
+  // Junos curly: login { user <name> {
+  sanitized = sanitized.replace(
+    /(\buser\s+)(\S+)(\s*\{)/g,
+    (match, prefix, name, suffix) => {
+      if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      const placeholder = resolveUsernamePlaceholder(name);
+      return `${prefix}${placeholder}${suffix}`;
+    }
+  );
+  // Junos: full-name "First Last" on a login user line
+  sanitized = sanitized.replace(
+    /(full-name\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('SANITIZED_')) return match;
+      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+  // SNMPv3 usm user
+  sanitized = sanitized.replace(
+    /(usm\s+local-engine\s+user\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      const placeholder = resolveUsernamePlaceholder(name);
+      return `${prefix}${placeholder}`;
+    }
+  );
 
   // Check Point Gaia: set user <name> / add user <name>
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /((?:set|add)\s+user\s+)(\S+)/gi,
     (match, prefix, name) => {
       if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
-      let placeholder = usernameMap.get(name);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(name, placeholder);
-        addReplacement('username', placeholder, name);
-      }
+      const placeholder = resolveUsernamePlaceholder(name);
       return `${prefix}${placeholder}`;
     }
   );
-  }
 
   // Check Point dbedit: :administrator ("name")
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(:administrator\s+\(")([^"]+)("\))/gi,
     (match, prefix, name, suffix) => {
       if (name === 'admin' || name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
-      let placeholder = usernameMap.get(name);
-      if (!placeholder) {
-        placeholder = `user-${counter.user++}`;
-        usernameMap.set(name, placeholder);
-        addReplacement('username', placeholder, name);
-      }
+      const placeholder = resolveUsernamePlaceholder(name);
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
+
+  // FortiOS header comment: #config-version=...:user=<name>
+  sanitized = sanitized.replace(
+    /(#config-version=\S*?:user=)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('REDACTED_') || name.startsWith('user-')) return match;
+      const placeholder = resolveUsernamePlaceholder(name);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // FortiOS: edit "name" inside admin/local-user/radius/ldap/api-user/snmp
+  // user blocks -- every edit in the block, not just the first (properly
+  // parsed via findFortiBlocks' depth-aware config/end tracking, see
+  // point 4 of the review: "Parse FortiOS config/edit/next/end blocks
+  // properly").
+  sanitized = redactFortiEditBlocks(
+    sanitized,
+    (path) => {
+      const p = path.toLowerCase();
+      return p === 'system admin' || p === 'user local' || p === 'user radius' ||
+        p === 'user tacacs+' || p === 'user ldap' || p === 'user group' ||
+        p === 'system api-user' || p === 'system snmp user';
+    },
+    (name) => resolveUsernamePlaceholder(name)
+  );
 
   } // end opts.usernames
 
   // -----------------------------------------------------------------------
-  // 5. CERTIFICATE PRIVATE KEYS
-  // -----------------------------------------------------------------------
-  if (opts.certificates) {
-
-  // PEM blocks
-  sanitized = sanitized.replace(
-    /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/g,
-    (match) => {
-      const placeholder = `REDACTED_CERT_${counter.cert++}`;
-      addReplacement('certificate', placeholder, '[PRIVATE KEY BLOCK]');
-      return placeholder;
-    }
-  );
-
-  // XML private key tags
-  if (isPanos || runAll) {
-  sanitized = sanitized.replace(
-    /(<(?:private-key|certificate-key|ssl-key)>)([^<]+)(<\/)/gi,
-    (match, open, value, close) => {
-      if (value.trim().startsWith('REDACTED_')) return match;
-      const placeholder = `REDACTED_CERT_${counter.cert++}`;
-      addReplacement('certificate', placeholder, '[CERTIFICATE KEY]');
-      return `${open}${placeholder}${close}`;
-    }
-  );
-  }
-
-  } // end opts.certificates
-
-  // -----------------------------------------------------------------------
-  // 6. SYSTEM HOSTNAME
+  // 5. SYSTEM HOSTNAME
   // -----------------------------------------------------------------------
   if (opts.sysHostname) {
 
-  // ASA: hostname DEVICE_NAME
-  if (isAsa || runAll) {
+  function sysHostnameReplace(name) {
+    const placeholder = `sanitized-fw`;
+    learn('sys_hostname', placeholder, name);
+    counter.sysHostname++;
+    return placeholder;
+  }
+
+  // ASA/Check Point Gaia: hostname DEVICE_NAME
   sanitized = sanitized.replace(
     /^(hostname\s+)(\S+)/gim,
     (match, prefix, name) => {
       if (name.startsWith('sanitized-')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}${placeholder}`;
+      return `${prefix}${sysHostnameReplace(name)}`;
     }
   );
-  }
 
-  // FortiGate: set hostname "DEVICE_NAME"
-  if (isFortigate || runAll) {
+  // FortiGate/Check Point Gaia: set hostname "DEVICE_NAME" (quoted)
   sanitized = sanitized.replace(
     /(set\s+hostname\s+)"([^"]+)"/gi,
     (match, prefix, name) => {
       if (name.startsWith('sanitized-')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}"${placeholder}"`;
+      return `${prefix}"${sysHostnameReplace(name)}"`;
     }
   );
-  }
-
-  // FortiGate unquoted: set hostname DEVICE_NAME
-  if (isFortigate || runAll) {
+  // FortiGate/Check Point Gaia unquoted: set hostname DEVICE_NAME
   sanitized = sanitized.replace(
     /(set\s+hostname\s+)(\S+)/gi,
     (match, prefix, name) => {
       if (name.startsWith('sanitized-') || name.startsWith('"')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}${placeholder}`;
+      return `${prefix}${sysHostnameReplace(name)}`;
     }
   );
-  }
 
-  // PAN-OS: <hostname>NAME</hostname>
-  if (isPanos || runAll) {
+  // PAN-OS: <hostname>NAME</hostname> / Junos XML: <host-name>NAME</host-name>
+  // PAN-OS set-CLI: set deviceconfig system hostname NAME
   sanitized = sanitized.replace(
-    /(<hostname>)([^<]+)(<\/hostname>)/gi,
+    /(<(?:hostname|host-name)>)([^<]+)(<\/(?:hostname|host-name)>)/gi,
     (match, open, value, close) => {
       if (value.trim().startsWith('sanitized-')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, value.trim());
-      counter.sysHostname++;
-      return `${open}${placeholder}${close}`;
+      return `${open}${sysHostnameReplace(value.trim())}${close}`;
     }
   );
-  }
+  sanitized = sanitized.replace(
+    /(deviceconfig\s+system\s+hostname\s+)(\S+)/gi,
+    (match, prefix, name) => {
+      if (name.startsWith('sanitized-')) return match;
+      return `${prefix}${sysHostnameReplace(name)}`;
+    }
+  );
 
-  // SRX: set system host-name <name>
-  if (isSrx || runAll) {
+  // SRX set: set system host-name <name>
   sanitized = sanitized.replace(
     /(set\s+system\s+host-name\s+)(\S+)/gi,
     (match, prefix, name) => {
       if (name.startsWith('sanitized-')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}${placeholder}`;
+      return `${prefix}${sysHostnameReplace(name)}`;
     }
   );
-  }
 
   // SRX hierarchical: host-name <name>;
-  if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(host-name\s+)(\S+)(;)/gi,
     (match, prefix, name, semi) => {
       if (name.startsWith('sanitized-')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}${placeholder}${semi}`;
+      return `${prefix}${sysHostnameReplace(name)}${semi}`;
     }
   );
-  }
-
-  // Check Point Gaia: set hostname <name>
-  if (isCheckpoint || runAll) {
-  sanitized = sanitized.replace(
-    /(set\s+hostname\s+)(\S+)/gi,
-    (match, prefix, name) => {
-      if (name.startsWith('sanitized-') || name.startsWith('"')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}${placeholder}`;
-    }
-  );
-  }
 
   // Check Point dbedit: :name ("GATEWAY") followed by :type (gateway/cluster)
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(:name\s+\(")([^"]+)("\)\s*\n\s*:type\s+\((?:gateway|cluster|gateway_cluster))/gi,
     (match, prefix, name, suffix) => {
       if (name.startsWith('sanitized-')) return match;
-      const placeholder = `sanitized-fw`;
-      addReplacement('sys_hostname', placeholder, name);
-      counter.sysHostname++;
-      return `${prefix}${placeholder}${suffix}`;
+      return `${prefix}${sysHostnameReplace(name)}${suffix}`;
     }
   );
-  }
 
   } // end opts.sysHostname
 
   // -----------------------------------------------------------------------
-  // 7. SERVER HOSTNAMES / FQDNs
+  // 6. SERVER HOSTNAMES / FQDNs (structural keyword-based)
   // -----------------------------------------------------------------------
   if (opts.hostnames) {
 
   // XML tags for servers
-  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:ldap-server-address|radius-server-ip|tacplus-server-ip|ntp-server-address|dns-server-address|server-address|server-name|server-host|syslog-server)>)([^<]+)(<\/)/gi,
     (match, open, value, close) => {
@@ -2183,301 +2650,385 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       if (trimmed.startsWith('REDACTED_') || trimmed.startsWith('host-')) return match;
       // Skip if it's an IP (handled later)
       if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(trimmed)) return match;
-      let placeholder = hostnameMap.get(trimmed);
-      if (!placeholder) {
-        placeholder = `host-${counter.host++}.example.net`;
-        hostnameMap.set(trimmed, placeholder);
-        addReplacement('hostname', placeholder, trimmed);
-      }
+      const placeholder = resolveHostnamePlaceholder(trimmed);
       return `${open}${placeholder}${close}`;
     }
   );
-  }
 
-  // Set-format server hostnames
+  // Set-format server hostnames. Excludes "syslog host <name>" (note the
+  // negative lookahead on the "syslog" branch) -- that's Junos's "syslog
+  // host <hostname> any any" form, where "host" is a literal keyword, not
+  // part of the value; the dedicated rule just below handles it so the
+  // "syslog host " keyword text survives.
   sanitized = sanitized.replace(
-    /(set\s+(?:system\s+)?(?:radius-server|tacplus-server|name-server|ntp\s+server|syslog|dns)\s+)(\S+)/gi,
+    /(set\s+(?:system\s+)?(?:radius-server|tacplus-server|name-server|ntp\s+server|syslog(?!\s+host\b)|dns)\s+)(\S+)/gi,
     (match, prefix, value) => {
       if (value.startsWith('REDACTED_') || value.startsWith('host-')) return match;
       if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
-      let placeholder = hostnameMap.get(value);
-      if (!placeholder) {
-        placeholder = `host-${counter.host++}.example.net`;
-        hostnameMap.set(value, placeholder);
-        addReplacement('hostname', placeholder, value);
-      }
+      const placeholder = resolveHostnamePlaceholder(value);
       return `${prefix}${placeholder}`;
+    }
+  );
+
+  // Junos: syslog host <hostname> any any -- the "syslog host " keyword
+  // must survive even after the hostname argument is redacted.
+  sanitized = sanitized.replace(
+    /(syslog\s+host\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_') || value.startsWith('host-')) return match;
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
+      const placeholder = resolveHostnamePlaceholder(value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
+  // Junos: ike gateway ... address <host>
+  sanitized = sanitized.replace(
+    /(ike\s+gateway\s+\S+\s+address\s+)(\S+)(;)/gi,
+    (match, prefix, value, semi) => {
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
+      const placeholder = resolveHostnamePlaceholder(value);
+      return `${prefix}${placeholder}${semi}`;
     }
   );
 
   // ASA: logging host <interface> <hostname>
-  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(logging\s+host\s+\S+\s+)([a-zA-Z][\w.-]+\.[a-zA-Z]{2,})/gi,
     (match, prefix, value) => {
       if (value.startsWith('host-')) return match;
-      let placeholder = hostnameMap.get(value);
-      if (!placeholder) {
-        placeholder = `host-${counter.host++}.example.net`;
-        hostnameMap.set(value, placeholder);
-        addReplacement('hostname', placeholder, value);
-      }
+      const placeholder = resolveHostnamePlaceholder(value);
       return `${prefix}${placeholder}`;
     }
   );
-  }
 
-  // Check Point dbedit: server references in :log_server, :syslog_server, etc.
-  if (isCheckpoint || runAll) {
+  // Check Point dbedit: server references
   sanitized = sanitized.replace(
     /(:(?:log_server|syslog_server|tacacs_server|radius_server)\s+\(")([^"]+)("\))/gi,
     (match, prefix, value, suffix) => {
       if (value.startsWith('host-') || value.startsWith('REDACTED_')) return match;
       if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
-      let placeholder = hostnameMap.get(value);
-      if (!placeholder) {
-        placeholder = `host-${counter.host++}.example.net`;
-        hostnameMap.set(value, placeholder);
-        addReplacement('hostname', placeholder, value);
-      }
+      const placeholder = resolveHostnamePlaceholder(value);
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
+
+  // Check Point Gaia: set ntp server primary|secondary <fqdn>
+  sanitized = sanitized.replace(
+    /(set\s+ntp\s+server\s+(?:primary|secondary)\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) return match;
+      const placeholder = resolveHostnamePlaceholder(value);
+      return `${prefix}${placeholder}`;
+    }
+  );
 
   } // end opts.hostnames
 
   // -----------------------------------------------------------------------
-  // 8. BGP AS NUMBERS
+  // 7. BGP AS NUMBERS / ROUTE-TARGET COMMUNITIES
   // -----------------------------------------------------------------------
   if (opts.bgp) {
 
+  function bgpReplace(value) {
+    const placeholder = `REDACTED_BGP_${counter.bgp++}`;
+    learn('bgp', placeholder, value);
+    return placeholder;
+  }
+
   // XML
-  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:local-as|peer-as|autonomous-system|local-as-number|remote-as)>)(\d+)(<\/)/gi,
-    (match, open, value, close) => {
-      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
-      addReplacement('bgp', placeholder, value);
-      return `${open}${placeholder}${close}`;
-    }
+    (match, open, value, close) => `${open}${bgpReplace(value)}${close}`
   );
-  }
 
-  // Set/CLI format
+  // Bare CLI keyword forms (no longer requires "set "/"router " prefix,
+  // since these compound keywords are specific enough on their own):
+  // peer-as, local-as, remote-as, external-remote-as, autonomous-system
   sanitized = sanitized.replace(
-    /((?:autonomous-system|router\s+bgp|neighbor\s+\S+\s+remote-as|set\s+local-as|set\s+remote-as)\s+)(\d+)/gi,
-    (match, prefix, value) => {
-      if (value.startsWith('REDACTED_')) return match;
-      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
-      addReplacement('bgp', placeholder, value);
-      return `${prefix}${placeholder}`;
-    }
+    /\b(peer-as|external-remote-as|local-as|remote-as|autonomous-system)(\s+)(\d+)/gi,
+    (match, keyword, ws, value) => `${keyword}${ws}${bgpReplace(value)}`
   );
 
-  // Check Point Gaia: set bgp as <number>
-  if (isCheckpoint || runAll) {
+  // router bgp <asn> / config router bgp -> set as <asn>
+  sanitized = sanitized.replace(
+    /(router\s+bgp\s+)(\d+)/gi,
+    (match, prefix, value) => `${prefix}${bgpReplace(value)}`
+  );
+  sanitized = sanitized.replace(
+    /(set\s+as\s+)(\d+)/gi,
+    (match, prefix, value) => `${prefix}${bgpReplace(value)}`
+  );
   sanitized = sanitized.replace(
     /(set\s+bgp\s+as\s+)(\d+)/gi,
-    (match, prefix, value) => {
-      if (value.startsWith('REDACTED_')) return match;
-      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
-      addReplacement('bgp', placeholder, value);
-      return `${prefix}${placeholder}`;
-    }
+    (match, prefix, value) => `${prefix}${bgpReplace(value)}`
   );
-  // set bgp peer <IP> as <number>
   sanitized = sanitized.replace(
     /(set\s+bgp\s+peer\s+\S+\s+as\s+)(\d+)/gi,
-    (match, prefix, value) => {
-      if (value.startsWith('REDACTED_')) return match;
-      const placeholder = `REDACTED_BGP_${counter.bgp++}`;
-      addReplacement('bgp', placeholder, value);
-      return `${prefix}${placeholder}`;
-    }
+    (match, prefix, value) => `${prefix}${bgpReplace(value)}`
   );
-  }
+
+  // Route-target / extended-community values: target:ASN:N
+  sanitized = sanitized.replace(
+    /\btarget:\d+:\d+\b/g,
+    (match) => bgpReplace(match)
+  );
+  // set community <ASN:N> / set extcommunity rt <ASN:N>
+  sanitized = sanitized.replace(
+    /(set\s+(?:extcommunity\s+rt|community)\s+)(\d+:\d+)/gi,
+    (match, prefix, value) => `${prefix}${bgpReplace(value)}`
+  );
 
   } // end opts.bgp
 
   // -----------------------------------------------------------------------
-  // 9. DESCRIPTIONS, COMMENTS, REMARKS
+  // 8. DESCRIPTIONS, COMMENTS, REMARKS, BANNERS, MESSAGES
   // -----------------------------------------------------------------------
   if (opts.descriptions) {
 
-  // ASA: description <text> / remark <text>
-  if (isAsa || runAll) {
+  function descReplace() {
+    return `SANITIZED_DESC_${counter.description++}`;
+  }
+
+  // description / remark anywhere on a line (not just at line start --
+  // ASA "access-list X extended remark TEXT" has "remark" mid-line)
   sanitized = sanitized.replace(
-    /^(\s*(?:description|remark)\s+)(.+)$/gim,
-    (match, prefix, text) => {
+    /\b(description|remark)\s+(.+)$/gim,
+    (match, keyword, text) => {
       if (/^SANITIZED_DESC_\d+$/.test(text.trim())) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      const placeholder = descReplace();
       addReplacement('description', placeholder, text.trim());
-      return `${prefix}${placeholder}`;
+      return `${keyword} ${placeholder}`;
     }
   );
-  }
 
-  // FortiGate: set comment "..."
-  if (isFortigate || runAll) {
+  // Junos unquoted description with trailing semicolon:
+  // description FAKE-TEXT;
   sanitized = sanitized.replace(
-    /(set\s+comment\s+)"([^"]+)"/gi,
+    /\bdescription\s+([^\s";][^\n;]*?)\s*;/g,
+    (match, text) => {
+      if (/^SANITIZED_DESC_\d+$/.test(text.trim())) return match;
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, text.trim());
+      return `description ${placeholder};`;
+    }
+  );
+
+  // FortiGate: set comment(s)/alias "..."
+  sanitized = sanitized.replace(
+    /(set\s+(?:comment|comments|alias)\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      const placeholder = descReplace();
       addReplacement('description', placeholder, value);
       return `${prefix}"${placeholder}"`;
     }
   );
-  }
 
-  // FortiGate: set comments "..."
-  if (isFortigate || runAll) {
+  // PAN-OS: <description>text</description> / <login-banner>text</login-banner>
   sanitized = sanitized.replace(
-    /(set\s+comments\s+)"([^"]+)"/gi,
-    (match, prefix, value) => {
-      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
-      addReplacement('description', placeholder, value);
-      return `${prefix}"${placeholder}"`;
-    }
-  );
-  }
-
-  // PAN-OS: <description>text</description>
-  if (isPanos || runAll) {
-  sanitized = sanitized.replace(
-    /(<description>)([^<]+)(<\/description>)/gi,
-    (match, open, value, close) => {
+    /(<(description|login-banner)>)([^<]+)(<\/\2>)/gi,
+    (match, open, tag, value, close) => {
       if (/^SANITIZED_DESC_\d+$/.test(value.trim())) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      const placeholder = descReplace();
       addReplacement('description', placeholder, value.trim());
       return `${open}${placeholder}${close}`;
     }
   );
-  }
+  // PAN-OS: <serial>...</serial> / <auth-code>...</auth-code>
+  sanitized = sanitized.replace(
+    /(<(serial|auth-code)>)([^<]+)(<\/\2>)/gi,
+    (match, open, tag, value, close) => {
+      if (value.trim().startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_SERIAL_${counter.serial++}`;
+      addReplacement('serial', placeholder, value.trim());
+      return `${open}${placeholder}${close}`;
+    }
+  );
 
-  // SRX: description "text"
-  if (isSrx || runAll) {
+  // SRX: description "text" (quoted; unquoted Junos handled above)
   sanitized = sanitized.replace(
     /(description\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      const placeholder = descReplace();
       addReplacement('description', placeholder, value);
       return `${prefix}"${placeholder}"`;
     }
   );
-  }
+
+  // Junos: login message "text" (single or multi-line, may contain \n)
+  sanitized = sanitized.replace(
+    /(login\s+message\s+)"((?:[^"\\]|\\.)*)"/gi,
+    (match, prefix, value) => {
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+  // Junos curly: message "text" (login message block)
+  sanitized = sanitized.replace(
+    /(\bmessage\s+)"((?:[^"\\]|\\.)*)"/gi,
+    (match, prefix, value) => {
+      if (/^SANITIZED_DESC_\d+$/.test(value) || value.startsWith('msgvalue')) return match;
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // Junos: /* comment */ blocks
+  sanitized = sanitized.replace(
+    /\/\*([\s\S]*?)\*\//g,
+    (match, text) => {
+      if (/^\s*SANITIZED_DESC_\d+\s*$/.test(text)) return match;
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, text.trim());
+      return `/* ${placeholder} */`;
+    }
+  );
+
+  // ASA: banner <type> ^...^ (motd, login, exec)
+  sanitized = sanitized.replace(
+    /(banner\s+\w+\s+)\^([^^]*)\^/gi,
+    (match, prefix, value) => {
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, value);
+      return `${prefix}^${placeholder}^`;
+    }
+  );
+
+  // ASA: name <ip> <name> [description <text>]
+  sanitized = sanitized.replace(
+    /^(name\s+\S+\s+)(\S+)(\s+description\s+.+)?$/gim,
+    (match, prefix, name, descPart) => {
+      let replacedName = name;
+      if (!name.startsWith('obj-') && !name.startsWith('REDACTED_')) {
+        replacedName = resolveObjectNamePlaceholder(name);
+      }
+      let replacedDesc = descPart || '';
+      if (descPart) {
+        const dm = descPart.match(/^(\s+description\s+)(.+)$/i);
+        if (dm && !/^SANITIZED_DESC_\d+$/.test(dm[2].trim())) {
+          const placeholder = descReplace();
+          addReplacement('description', placeholder, dm[2].trim());
+          replacedDesc = `${dm[1]}${placeholder}`;
+        }
+      }
+      return `${prefix}${replacedName}${replacedDesc}`;
+    }
+  );
+
+  // FortiOS: set buffer "..." (multi-line replacemsg body, may embed \n)
+  sanitized = sanitized.replace(
+    /(set\s+buffer\s+)"((?:[^"\\]|\\.)*)"/gi,
+    (match, prefix, value) => {
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
 
   // Check Point dbedit: :comments ("text")
-  if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(:comments\s+\(")([^"]+)("\))/gi,
     (match, prefix, value, suffix) => {
       if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      const placeholder = descReplace();
       addReplacement('description', placeholder, value);
       return `${prefix}${placeholder}${suffix}`;
     }
   );
-  }
 
-  // Check Point Gaia: set comment "text"
-  if (isCheckpoint || runAll) {
+  // Check Point Gaia: set comment "text" / set message msgvalue "text"
   sanitized = sanitized.replace(
     /(set\s+comment\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
-      const placeholder = `SANITIZED_DESC_${counter.description++}`;
+      const placeholder = descReplace();
       addReplacement('description', placeholder, value);
       return `${prefix}"${placeholder}"`;
     }
   );
-  }
+  sanitized = sanitized.replace(
+    /(set\s+message\s+msgvalue\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (/^SANITIZED_DESC_\d+$/.test(value)) return match;
+      const placeholder = descReplace();
+      addReplacement('description', placeholder, value);
+      return `${prefix}"${placeholder}"`;
+    }
+  );
 
   } // end opts.descriptions
 
   // -----------------------------------------------------------------------
-  // 10. DOMAIN NAMES (FQDNs that aren't server hostnames)
+  // 9. DOMAIN NAMES (explicit fqdn-style fields; shares the domain map with
+  //    the URL pass below and the generic FQDN pass further down)
   // -----------------------------------------------------------------------
   if (opts.domains) {
 
-  // FortiGate: set fqdn "domain.com"
-  if (isFortigate || runAll) {
+  // FortiGate: set fqdn "domain.com" / set domain "domain.lan"
   sanitized = sanitized.replace(
     /(set\s+fqdn\s+)"([^"]+)"/gi,
     (match, prefix, value) => {
       if (value.startsWith('example-') || value.startsWith('REDACTED_')) return match;
-      let placeholder = domainMap.get(value);
-      if (!placeholder) {
-        placeholder = `example-${counter.domain++}.net`;
-        domainMap.set(value, placeholder);
-        addReplacement('domain', placeholder, value);
-      }
-      return `${prefix}"${placeholder}"`;
+      return `${prefix}"${resolveDomainPlaceholder(value)}"`;
     }
   );
-  }
+  sanitized = sanitized.replace(
+    /(set\s+domain\s+)"([^"]+)"/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('example-') || value.startsWith('REDACTED_')) return match;
+      return `${prefix}"${resolveDomainPlaceholder(value)}"`;
+    }
+  );
 
   // ASA: fqdn v4 domain.com
-  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(fqdn\s+v[46]\s+)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gi,
     (match, prefix, value) => {
       if (value.startsWith('example-')) return match;
-      let placeholder = domainMap.get(value);
-      if (!placeholder) {
-        placeholder = `example-${counter.domain++}.net`;
-        domainMap.set(value, placeholder);
-        addReplacement('domain', placeholder, value);
-      }
-      return `${prefix}${placeholder}`;
+      return `${prefix}${resolveDomainPlaceholder(value)}`;
     }
   );
-  }
 
-  // PAN-OS: <fqdn>domain.com</fqdn>
-  if (isPanos || runAll) {
+  // PAN-OS: <fqdn>domain.com</fqdn> / <domain>domain.com</domain>
   sanitized = sanitized.replace(
-    /(<fqdn>)([^<]+)(<\/fqdn>)/gi,
-    (match, open, value, close) => {
+    /(<(fqdn|domain)>)([^<]+)(<\/\2>)/gi,
+    (match, open, tag, value, close) => {
       const trimmed = value.trim();
       if (trimmed.startsWith('example-')) return match;
-      let placeholder = domainMap.get(trimmed);
-      if (!placeholder) {
-        placeholder = `example-${counter.domain++}.net`;
-        domainMap.set(trimmed, placeholder);
-        addReplacement('domain', placeholder, trimmed);
-      }
-      return `${open}${placeholder}${close}`;
+      return `${open}${resolveDomainPlaceholder(trimmed)}${close}`;
     }
   );
-  }
 
-  // set domain-name / domain-name <fqdn>
+  // set domain-name / domain-name <fqdn> / Check Point set domainname
   sanitized = sanitized.replace(
     /((?:set\s+)?domain-name\s+)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gi,
     (match, prefix, value) => {
       if (value.startsWith('example-')) return match;
-      let placeholder = domainMap.get(value);
-      if (!placeholder) {
-        placeholder = `example-${counter.domain++}.net`;
-        domainMap.set(value, placeholder);
-        addReplacement('domain', placeholder, value);
-      }
-      return `${prefix}${placeholder}`;
+      return `${prefix}${resolveDomainPlaceholder(value)}`;
+    }
+  );
+  sanitized = sanitized.replace(
+    /(set\s+domainname\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('example-') || value.startsWith('REDACTED_')) return match;
+      return `${prefix}${resolveDomainPlaceholder(value)}`;
     }
   );
 
   } // end opts.domains
 
   // -----------------------------------------------------------------------
-  // 11. ZONE NAMES
+  // 10. ZONE NAMES (unchanged: vendor-scoped structural placement, not part
+  //     of the H3b credential/SNMP/BGP/hostname degating requirement)
   // -----------------------------------------------------------------------
   if (opts.zones) {
 
-  // Helper to get or create zone placeholder
   function zoneReplace(original) {
     if (!original || original === 'any' || original === 'global' || original === 'local') return original;
     if (original.startsWith('zone-') || original.startsWith('REDACTED_')) return original;
@@ -2490,79 +3041,53 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     return placeholder;
   }
 
-  // ASA: nameif <zone_name>
   if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(nameif\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${zoneReplace(name)}`
   );
-  }
-
-  // ASA: access-group <acl_name> in interface <zone>
-  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /((?:in|out)\s+interface\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${zoneReplace(name)}`
   );
   }
 
-  // FortiGate: set srcintf "zone" / set dstintf "zone"
   if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:srcintf|dstintf)\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
   );
-  }
-
-  // FortiGate: set associated-interface "zone"
-  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+associated-interface\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
   );
-  }
-
-  // FortiGate: config system zone → edit "zone_name"
-  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(config\s+system\s+zone[\s\S]*?edit\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${zoneReplace(name)}"`
   );
   }
 
-  // FortiGate: set interface "port1" "port2" under zone
-  // This handles zone member interfaces - we'll leave interface names alone
-  // since they're structural (port1, wan1, etc.)
-
-  // PAN-OS: <zone><entry name="zone_name">
   if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<zone>\s*<entry\s+name=")([^"]+)(")/gi,
     (match, prefix, name, suffix) => `${prefix}${zoneReplace(name)}${suffix}`
   );
-  }
-
-  // PAN-OS: <to><member>zone</member></to> and <from><member>zone</member></from>
-  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:to|from)>\s*<member>)([^<]+)(<\/member>)/gi,
     (match, prefix, name, suffix) => `${prefix}${zoneReplace(name)}${suffix}`
   );
   }
 
-  // SRX: security-zone <name> or from-zone <name> to-zone <name>
   if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /((?:security-zone|from-zone|to-zone)\s+)(\S+)/gi,
     (match, prefix, name) => {
-      // Don't replace keywords
       if (name === '{' || name === 'to-zone' || name === 'policy') return match;
       return `${prefix}${zoneReplace(name)}`;
     }
   );
   }
 
-  // Check Point Gaia: set interface <name> (custom logical interface/zone names)
   if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(set\s+interface\s+)(\S+)/gi,
@@ -2576,70 +3101,52 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.zones
 
   // -----------------------------------------------------------------------
-  // 12. OBJECT / GROUP NAMES (can identify org topology)
+  // 11. OBJECT / GROUP NAMES (can identify org topology)
   // -----------------------------------------------------------------------
   if (opts.objectNames) {
 
-  // Helper for object name replacement
+  const builtins = new Set([
+    'tcp', 'udp', 'icmp', 'ip', 'http', 'https', 'ssh', 'telnet', 'ftp',
+    'dns', 'smtp', 'pop3', 'imap', 'ntp', 'snmp', 'syslog', 'dhcp',
+    'tftp', 'bgp', 'ospf', 'ldap', 'ldaps', 'kerberos', 'radius',
+    'tacacs', 'h323', 'sip', 'rtsp', 'sqlnet', 'mysql', 'mssql',
+    'oracle', 'rdp', 'vnc', 'smb', 'netbios', 'ping', 'traceroute',
+  ]);
   function objReplace(original) {
     if (!original || original === 'any' || original === 'all' || original === 'none') return original;
     if (original.startsWith('obj-') || original.startsWith('REDACTED_')) return original;
-    // Skip common built-in service names
-    const builtins = new Set([
-      'tcp', 'udp', 'icmp', 'ip', 'http', 'https', 'ssh', 'telnet', 'ftp',
-      'dns', 'smtp', 'pop3', 'imap', 'ntp', 'snmp', 'syslog', 'dhcp',
-      'tftp', 'bgp', 'ospf', 'ldap', 'ldaps', 'kerberos', 'radius',
-      'tacacs', 'h323', 'sip', 'rtsp', 'sqlnet', 'mysql', 'mssql',
-      'oracle', 'rdp', 'vnc', 'smb', 'netbios', 'ping', 'traceroute',
-    ]);
     if (builtins.has(original.toLowerCase())) return original;
-    let placeholder = objNameMap.get(original);
-    if (!placeholder) {
-      placeholder = `obj-${counter.objName++}`;
-      objNameMap.set(original, placeholder);
-      addReplacement('object_name', placeholder, original);
-    }
-    return placeholder;
+    return resolveObjectNamePlaceholder(original);
   }
 
-  // ASA: object network <name> / object-group network <name> / object service <name>
   if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(object(?:-group)?\s+(?:network|service)\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${objReplace(name)}`
   );
-  }
-
-  // ASA: access-list <acl_name>
-  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(access-list\s+)(\S+)(\s+(?:extended|standard|remark|line))/gi,
     (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
   );
-  }
-
-  // ASA: access-group <acl_name>
-  if (isAsa || runAll) {
   sanitized = sanitized.replace(
     /(access-group\s+)(\S+)/gi,
     (match, prefix, name) => `${prefix}${objReplace(name)}`
   );
+  // "permit ip object FAKE-OBJ any/host" -- an object referenced in an ACL
+  sanitized = sanitized.replace(
+    /(\bobject\s+)(\S+)(\s+(?:any|host))/gi,
+    (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
+  );
   }
 
-  // FortiGate: config firewall address → edit "name"
   if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(config\s+firewall\s+(?:address|addrgrp|service\s+custom|service\s+group|vip|ippool)\s*\n\s*edit\s+)"([^"]+)"/gi,
     (match, prefix, name) => `${prefix}"${objReplace(name)}"`
   );
-  }
-
-  // FortiGate: set srcaddr/dstaddr/service "name"
-  if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:srcaddr|dstaddr|service|dstaddr6|srcaddr6|poolname|nat-source-vip|groups|member)\s+)"([^"]+)"/gi,
     (match, prefix, name) => {
-      // Handle space-separated lists inside quotes
       const parts = name.split('" "');
       if (parts.length > 1) {
         const replaced = parts.map(p => objReplace(p)).join('" "');
@@ -2649,17 +3156,25 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     }
   );
   }
+  // FortiOS: every "edit" inside a firewall address/addrgrp/service/vip
+  // block, not just the first -- see point 4 of the review.
+  sanitized = redactFortiEditBlocks(
+    sanitized,
+    (path) => {
+      const p = path.toLowerCase();
+      return p === 'firewall address' || p === 'firewall addrgrp' ||
+        p === 'firewall service custom' || p === 'firewall service group' ||
+        p === 'firewall vip' || p === 'firewall ippool' ||
+        p.startsWith('vpn ipsec') || p === 'vpn certificate local';
+    },
+    (name) => objReplace(name)
+  );
 
-  // PAN-OS: <address><entry name="name"> / <address-group><entry name="name">
   if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:address|address-group|service|service-group|application-group|tag)>\s*<entry\s+name=")([^"]+)(")/gi,
     (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
   );
-  }
-
-  // PAN-OS: <source|destination><member>name</member>
-  if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<(?:source|destination|source-user|tag)>\s*<member>)([^<]+)(<\/member>)/gi,
     (match, prefix, name, suffix) => {
@@ -2669,7 +3184,6 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
   }
 
-  // SRX: address-set <name> / address <name>
   if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /((?:address-set|address|application-set|application)\s+)(\S+)(\s+(?:\{|address|protocol))/gi,
@@ -2679,8 +3193,15 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     }
   );
   }
+  // Junos address-book entries: address <NAME> <ip>/<prefix>; -- the name
+  // often embeds the IP it labels (e.g. "H_192.0.2.10"), so it needs its
+  // own rule since the object doesn't have a "{"/"address"/"protocol"
+  // keyword immediately after the name the way address-set members do.
+  sanitized = sanitized.replace(
+    /(address-book\s+\S+\s+address\s+)(\S+)(\s+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/gi,
+    (match, prefix, name, suffix) => `${prefix}${objReplace(name)}${suffix}`
+  );
 
-  // Check Point dbedit: :name ("OBJECT_NAME")
   if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(:name\s+\(")([^"]+)("\))/gi,
@@ -2694,7 +3215,48 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.objectNames
 
   // -----------------------------------------------------------------------
-  // 13. IPv4 ADDRESSES (public + private)
+  // 12. GENERIC LDAP DISTINGUISHED NAMES (dc=/cn=/ou=/o= chains) --
+  //     vendor-independent, catches base-dn/bind-dn regardless of which
+  //     keyword introduces them.
+  // -----------------------------------------------------------------------
+  sanitized = sanitized.replace(
+    /\b((?:dc|cn|ou|o|uid)=[^\s"',;)<>]+(?:,\s*(?:dc|cn|ou|o|uid)=[^\s"',;)<>]+)+)/gi,
+    (match) => {
+      if (match.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_DN_${counter.dn++}`;
+      addReplacement('ldap_dn', placeholder, match);
+      return placeholder;
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // 13. MAC / EUI-64 ADDRESSES
+  // -----------------------------------------------------------------------
+  if (opts.macAddresses) {
+
+  // Colon/hyphen hex form: 00:00:5e:00:53:24
+  sanitized = sanitized.replace(
+    /\b([0-9a-fA-F]{2}([:-])[0-9a-fA-F]{2}(?:\2[0-9a-fA-F]{2}){4,6})\b/g,
+    (match) => {
+      const placeholder = `REDACTED_MAC_${counter.mac++}`;
+      addReplacement('mac', placeholder, match);
+      return placeholder;
+    }
+  );
+  // Cisco dotted-quad-hex form: 0000.5e00.5384
+  sanitized = sanitized.replace(
+    /\b([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\b/g,
+    (match) => {
+      const placeholder = `REDACTED_MAC_${counter.mac++}`;
+      addReplacement('mac', placeholder, match);
+      return placeholder;
+    }
+  );
+
+  } // end opts.macAddresses
+
+  // -----------------------------------------------------------------------
+  // 14. IPv4 ADDRESSES (public + private)
   // -----------------------------------------------------------------------
   if (opts.publicIps || opts.privateIps) {
 
@@ -2704,6 +3266,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   sanitized = sanitized.replace(ipRegex, (match, ip, cidr) => {
     if (!isValidIPv4(ip)) return match;
     if (isSubnetMask(ip)) return match;
+    if (isDocumentationIPv4(ip)) return match;
     const suffix = cidr || '';
 
     if (isPrivateOrReserved(ip)) {
@@ -2730,13 +3293,16 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.publicIps || opts.privateIps
 
   // -----------------------------------------------------------------------
-  // 14. IPv6 ADDRESSES
+  // 15. IPv6 ADDRESSES
   // -----------------------------------------------------------------------
   if (opts.ipv6) {
 
-  // Match IPv6 addresses: full, compressed, and with prefix length
-  // Covers: 2001:0db8:85a3::8a2e:370:7334, fe80::1%eth0, ::1, etc.
-  const ipv6Regex = /(?<![:\w])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|:(?::[0-9a-fA-F]{1,4}){1,7}|::)(?:%[a-zA-Z0-9]+)?(?=\/\d{1,3}\b|\s|$|[;,>"'\]])/gm;
+  // Match IPv6 addresses: full, compressed, and with prefix length. The
+  // lookahead includes "<" so an address immediately closed by an XML tag
+  // (e.g. Junos/PAN-OS "<ip>fd12:3456:789a:4::5</ip>") still matches --
+  // previously only whitespace/`;`/`,`/`>`/quotes/`]` were accepted, so
+  // XML-wrapped IPv6 addresses fell straight through unredacted.
+  const ipv6Regex = /(?<![:\w])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|:(?::[0-9a-fA-F]{1,4}){1,7}|::)(?:%[a-zA-Z0-9]+)?(?=\/\d{1,3}\b|\s|$|[;,><"'\]])/gm;
 
   sanitized = sanitized.replace(ipv6Regex, (match) => {
     const addr = match.replace(/%[a-zA-Z0-9]+$/, ''); // strip zone ID for comparison
@@ -2756,7 +3322,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.ipv6
 
   // -----------------------------------------------------------------------
-  // 15. EMAIL ADDRESSES
+  // 16. EMAIL ADDRESSES
   // -----------------------------------------------------------------------
   if (opts.emails) {
 
@@ -2776,32 +3342,79 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.emails
 
   // -----------------------------------------------------------------------
-  // 16. URLs (http/https/ldap/ldaps — sanitize the domain portion)
+  // 17. URLs (http/https/ldap/ldaps/ftp): userinfo, host and query values
   // -----------------------------------------------------------------------
   if (opts.urls) {
 
-  const urlDomainMap = new Map();
+  function redactQueryValues(rest) {
+    if (!rest || !/[?&]/.test(rest)) return rest;
+    return rest.replace(/([?&][^=&\s"'<>]+=)([^&\s"'<>]+)/g, (m, key, val) => {
+      if (val.startsWith('REDACTED_')) return m;
+      const placeholder = `REDACTED_PARAM_${counter.key++}`;
+      addReplacement('key', placeholder, val);
+      return `${key}${placeholder}`;
+    });
+  }
+
+  // Userinfo (user:pass@ or user@) immediately after the scheme -- redacted
+  // as one blob before the host is resolved, so credentials embedded in a
+  // URL (e.g. Junos "archive-sites") can't leak even though the URL rule
+  // below only looks at the host.
+  sanitized = sanitized.replace(
+    /((?:https?|ftp|ldaps?):\/\/)([^\/\s"'<>@]+)@/gi,
+    (match, scheme, userinfo) => {
+      if (userinfo.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_USERINFO_${counter.key++}`;
+      addReplacement('key', placeholder, userinfo);
+      return `${scheme}${placeholder}@`;
+    }
+  );
 
   sanitized = sanitized.replace(
-    /((?:https?|ldaps?|ftp):\/\/)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})((?::\d+)?(?:\/[^\s"'<>]*)?)/gi,
-    (match, scheme, domain, pathPart) => {
+    /((?:https?|ldaps?|ftp):\/\/)(?:(REDACTED_USERINFO_\d+)@)?([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})((?::\d+)?(?:\/[^\s"'<>]*)?)/gi,
+    (match, scheme, userinfo, domain, pathPart) => {
       // Skip already-sanitized domains
       if (/^example(?:-\d+)?\.net$/.test(domain)) return match;
       if (/^host-\d+\.example\.net$/.test(domain)) return match;
-      let placeholder = urlDomainMap.get(domain);
-      if (!placeholder) {
-        placeholder = `example-${counter.url++}.net`;
-        urlDomainMap.set(domain, placeholder);
-        addReplacement('url', placeholder, domain);
-      }
-      return `${scheme}${placeholder}${pathPart || ''}`;
+      const placeholder = resolveDomainPlaceholder(domain, 'url');
+      const userinfoPart = userinfo ? `${userinfo}@` : '';
+      return `${scheme}${userinfoPart}${placeholder}${redactQueryValues(pathPart || '')}`;
     }
   );
 
   } // end opts.urls
 
   // -----------------------------------------------------------------------
-  // 17. INTERFACE NAMES (opt-in — off by default)
+  // 18. GENERIC FQDN PASS -- catches domain-like tokens that never went
+  //     through a specific keyword above (an IKE gateway address, a
+  //     radius/ntp server value written as bare text, a certificate
+  //     subject-name/fqdn, etc.). Requires >=2 labels and a plausible alpha
+  //     TLD (2-63 chars, matching the review's spec), and is
+  //     allowlist-filtered against our own placeholder domains so it never
+  //     re-redacts output it just produced.
+  // -----------------------------------------------------------------------
+  if (opts.domains || opts.hostnames) {
+
+  const fqdnRegex = /\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,63}\b/g;
+
+  sanitized = sanitized.replace(fqdnRegex, (match) => {
+    // Allowlist: our own placeholder domains, and generic non-identifying
+    // hostnames that appear in vendor boilerplate.
+    if (/^example(?:-\d+)?\.net$/i.test(match)) return match;
+    if (/^host-\d+\.example\.net$/i.test(match)) return match;
+    if (/^(localhost(\.localdomain)?)$/i.test(match)) return match;
+    if (match.startsWith('REDACTED_') || match.startsWith('SANITIZED_')) return match;
+    // Skip our own generated MAC/serial/etc. placeholders and things that
+    // slipped through with an all-numeric final label (defensive; the
+    // regex already requires an alpha TLD).
+    if (/^\d+\.\d+$/.test(match)) return match;
+    return resolveDomainPlaceholder(match);
+  });
+
+  } // end generic FQDN pass
+
+  // -----------------------------------------------------------------------
+  // 19. INTERFACE NAMES (opt-in — off by default)
   // -----------------------------------------------------------------------
   if (opts.interfaceNames) {
 
@@ -2821,7 +3434,6 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     return placeholder;
   }
 
-  // FortiGate: set interface "WAN-MPLS" or set srcintf/dstintf
   if (isFortigate || runAll) {
   sanitized = sanitized.replace(
     /(set\s+(?:device|interface|srcintf|dstintf|associated-interface)\s+)"([^"]+)"/gi,
@@ -2832,21 +3444,17 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
   }
 
-  // ASA: nameif already handled by zones, but interface descriptions like "WAN-MPLS"
-  // SRX: set interfaces <name> unit
   if (isSrx || runAll) {
   sanitized = sanitized.replace(
     /(set\s+interfaces\s+)([a-zA-Z][\w-]*[A-Z][\w-]*)(\s)/gi,
     (match, prefix, name, suffix) => {
       if (structuralIntf.test(name)) return match;
-      // Only replace names with uppercase letters (likely custom names)
       if (!/[A-Z].*[a-z]|[a-z].*[A-Z]/.test(name)) return match;
       return `${prefix}${intfReplace(name)}${suffix}`;
     }
   );
   }
 
-  // PAN-OS: <interface><entry name="WAN-MPLS">
   if (isPanos || runAll) {
   sanitized = sanitized.replace(
     /(<interface>\s*<entry\s+name=")([^"]+)(")/gi,
@@ -2857,7 +3465,6 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
   }
 
-  // Check Point Gaia: set interface <name>
   if (isCheckpoint || runAll) {
   sanitized = sanitized.replace(
     /(set\s+interface\s+)(\S+)/gi,
@@ -2871,6 +3478,45 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.interfaceNames
 
   // -----------------------------------------------------------------------
+  // 20. GLOBAL LEARNED-VALUE REPLACEMENT
+  // -----------------------------------------------------------------------
+  // Hostnames, usernames, domains, ASNs and object names learned from a
+  // structural match above are swept across the *entire* document one more
+  // time, longest-original-first with word-boundary anchors, so a value
+  // reused somewhere a structural rule doesn't look (a hostname embedded in
+  // an unrelated syslog filename, e.g. "FAKEHOST-fw01-messages") still gets
+  // scrubbed instead of leaking through that second occurrence.
+  {
+    const sortedLearned = [...learnedValues].sort((a, b) => b.original.length - a.original.length);
+    const seen = new Set();
+    for (const { original, placeholder } of sortedLearned) {
+      if (seen.has(original)) continue;
+      seen.add(original);
+      const escaped = escapeRegex(original);
+      const re = new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, 'g');
+      sanitized = sanitized.replace(re, placeholder);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // 21. RESIDUAL-ORIGINAL CHECK
+  // -----------------------------------------------------------------------
+  // Defense in depth: after every pass above, verify no replacement's
+  // original value (longer than 3 characters, where a false positive from
+  // short/common substrings is likely) still appears verbatim in the
+  // output. This should never trigger if the passes above are complete,
+  // but if a future edit adds a new redaction category and misses a
+  // formatting variant, this surfaces the leak in the returned result
+  // instead of silently shipping it -- callers (the UI) must treat a
+  // non-empty residualLeaks as a hard failure, not a warning.
+  const residualLeaks = [];
+  for (const r of replacements) {
+    if (typeof r.original === 'string' && r.original.length > 3 && sanitized.includes(r.original)) {
+      residualLeaks.push({ type: r.type, original: r.original });
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Build stats
   // -----------------------------------------------------------------------
 
@@ -2878,6 +3524,8 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     sanitizedText: sanitized,
     replacements,
     vendor,
+    vendorConfidence,
+    residualLeaks,
     stats: {
       hashes: counter.hash,
       keys: counter.key,
@@ -2898,6 +3546,8 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       customWords: counter.customWord,
       urls: counter.url,
       interfaceNames: counter.interfaceName,
+      macAddresses: counter.mac,
+      serialNumbers: counter.serial,
       total: replacements.length,
     },
   };
@@ -3027,6 +3677,11 @@ function validateSanitized(sanitizedText, opts) {
         }
       }
     }
+
+    // Residual-original check surfaced as a hard, high-severity warning
+    // (see sanitizeConfig's own residualLeaks, which this mirrors for
+    // callers -- like the batch handler -- that only look at
+    // validateSanitized's output).
   });
 
   return warnings;
@@ -3139,8 +3794,28 @@ $('#sanitizeBtn').addEventListener('click', () => {
   renderMappingTable(currentResult.replacements);
   $('#mappingCount').textContent = `${currentResult.replacements.length} replacements`;
 
-  // Validation pass
+  // Validation pass. Residual-original leaks and low vendor-detection
+  // confidence are folded into the same warnings panel as high/medium
+  // severity items so they can never ship silently -- the whole point of
+  // the residual-original check is that a leak surfaces to the user
+  // instead of being swallowed by a successful-looking download.
   const warnings = validateSanitized(currentResult.sanitizedText, options);
+  for (const leak of currentResult.residualLeaks) {
+    warnings.unshift({
+      severity: 'high',
+      line: 0,
+      message: `Residual original value still present in output (${leak.type}): ${leak.original}`,
+      snippet: '(see mapping table / re-run with the affected category enabled)',
+    });
+  }
+  if (currentResult.vendorConfidence === 'low') {
+    warnings.push({
+      severity: 'medium',
+      line: 0,
+      message: `Vendor detection confidence is low (matched vendor: ${currentResult.vendor}) -- vendor-specific rules (zones, object names, interfaces) may not have fired; review the output manually`,
+      snippet: '',
+    });
+  }
   renderWarnings(warnings);
 });
 
