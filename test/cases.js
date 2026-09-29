@@ -748,6 +748,34 @@ const cases = [
     leakTokens: ['FAKE103OSPFKEY'],
     mustSurvive: ['ip ospf message-digest-key 1 md5 7 '],
   },
+  {
+    id: 104, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 2: bare "password X" on a line-mode config line (line vty), no vendor-specific keyword around it',
+    input: asa('line vty 0 4\n password FAKE104VTYPW\n'),
+    leakTokens: ['FAKE104VTYPW'],
+    mustSurvive: ['line vty 0 4', 'password '],
+  },
+  {
+    id: 105, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 2: "username U password X privilege 15" without a trailing "encrypted" marker',
+    input: asa('username fakeuser105 password FAKE105USERPW privilege 15\n'),
+    leakTokens: ['FAKE105USERPW'],
+    mustSurvive: ['privilege 15'],
+  },
+  {
+    id: 106, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 2: "username U privilege 15 secret 9 $9$..." -- "privilege 15" sits between the username and "secret"',
+    input: asa('username fakeuser106 privilege 15 secret 9 $9$FAKE106SECRET\n'),
+    leakTokens: ['$9$FAKE106SECRET'],
+    mustSurvive: ['privilege 15'],
+  },
+  {
+    id: 107, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 2: PAN-OS set-CLI "... server s1 secret X" -- "secret" not directly preceded by "set "',
+    input: 'set shared server-profile email fakeprof107 server s1 secret FAKE107SECRET\n',
+    leakTokens: ['FAKE107SECRET'],
+    mustSurvive: ['server s1'],
+  },
 ];
 
 module.exports = { cases };

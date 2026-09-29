@@ -1956,8 +1956,12 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${algo ? algo + ' ' : ''}${placeholder}`;
     }
   );
+  // Tokens like "privilege 15" can sit between the username and "secret"
+  // (e.g. "username U privilege 15 secret 9 $9$..."); the lazy intra-line
+  // gap below tolerates that instead of requiring "secret" immediately
+  // after the username.
   sanitized = sanitized.replace(
-    /(\busername\s+\S+\s+secret\s+)(?:(\d+)\s+)?(\S+)/gi,
+    /(\busername\s+\S+(?:[ \t]+\S+)*?[ \t]+secret\s+)(?:(\d+)\s+)?(\S+)/gi,
     (match, prefix, algo, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
@@ -2256,6 +2260,32 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       const placeholder = `REDACTED_KEY_${counter.key++}`;
       addReplacement('key', placeholder, value);
       return `${prefix}"${placeholder}"`;
+    }
+  );
+
+  // Generic keyword -> next-value catch-all (vendor-independent). Runs last,
+  // after every vendor-specific rule above, so it only catches syntax none
+  // of them special-case: bare IOS "line vty 0 4" -> "password X", ASA
+  // "username U password X privilege 15" without a trailing "encrypted"
+  // marker, or "... secret X" outside a "set secret" prefix (e.g. a PAN-OS
+  // set-CLI server profile's "server s1 secret X"). The lead assertion
+  // requires whitespace/line-start immediately before the keyword so it
+  // can't match inside a larger word (e.g. "psksecret-remote", "monkey"),
+  // and the trailing \s+ requirement means a keyword with no space after it
+  // (e.g. "keys", "password-hash") isn't touched here either -- those are
+  // handled by their own dedicated rules above.
+  sanitized = sanitized.replace(
+    /(^|\s)((?:password|secret|key|key-string|pre-shared-key|psksecret|authentication-key|auth-key|api-key|passwd)\s+(?:(?:ENC|[0579])\s+)?)("[^"]*"|\S+)/gim,
+    (match, lead, keywordPart, rawValue) => {
+      const quoted = rawValue.length >= 2 && rawValue.startsWith('"') && rawValue.endsWith('"');
+      const value = quoted ? rawValue.slice(1, -1) : rawValue;
+      const GENERIC_KEYWORD_ENUMS = new Set([
+        'encrypted', 'hidden', 'ascii-text', 'hexadecimal', 'plain-text-password-value',
+      ]);
+      if (!value || value.startsWith('REDACTED_') || GENERIC_KEYWORD_ENUMS.has(value.toLowerCase())) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${lead}${keywordPart}${quoted ? `"${placeholder}"` : placeholder}`;
     }
   );
 
