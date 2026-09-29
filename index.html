@@ -2301,7 +2301,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // aes") -- those verbs describe what the *next* argument means, they
   // aren't themselves secret material.
   sanitized = sanitized.replace(
-    /(^|\s)((?:password|secret|key|key-string|pre-shared-key|psksecret|authentication-key|auth-key|api-key|passwd)\s+(?:(?:ENC|[0579])\s+)?)("[^"]*"|\S+)/gim,
+    /(^|\s)((?:password|secret|key|key-string|pre-shared-key|psksecret|authentication-key|auth-key|api-key|passwd|[\w-]*pass-phrase)\s+(?:(?:ENC|[0579])\s+)?)("[^"]*"|\S+)/gim,
     (match, lead, keywordPart, rawValue) => {
       const quoted = rawValue.length >= 2 && rawValue.startsWith('"') && rawValue.endsWith('"');
       const value = quoted ? rawValue.slice(1, -1) : rawValue;

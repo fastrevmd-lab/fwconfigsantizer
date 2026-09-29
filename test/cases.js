@@ -815,6 +815,13 @@ const cases = [
     leakTokens: [],
     mustSurvive: ['crypto key generate rsa', 'key chain FAKE112CHAINNAME', 'password encryption aes'],
   },
+  {
+    id: 113, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Round 2 finding 2: "*-pass-phrase" keyword (e.g. Fortinet private-key-pass-phrase) not covered by the catch-all',
+    input: 'set ssl-ssh-profile x private-key-pass-phrase FAKE113PASSPHRASE\n',
+    leakTokens: ['FAKE113PASSPHRASE'],
+    mustSurvive: ['private-key-pass-phrase'],
+  },
 ];
 
 module.exports = { cases };
