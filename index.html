@@ -3811,7 +3811,7 @@ $('#fileInput').addEventListener('change', (e) => {
   const reader = new FileReader();
   reader.onload = (ev) => {
     $('#configInput').value = ev.target.result;
-    $('#fileLabel').innerHTML = `<strong>${escapeHtml(file.name)}</strong> (${formatSize(file.size)})`;
+    setFileLabel($('#fileLabel'), file.name, formatSize(file.size));
     $('#sanitizeBtn').disabled = false;
     updateConfigMeta(ev.target.result);
   };
@@ -3840,7 +3840,7 @@ function updateConfigMeta(text) {
 // Clear
 $('#clearBtn').addEventListener('click', () => {
   $('#configInput').value = '';
-  $('#fileLabel').innerHTML = '';
+  $('#fileLabel').textContent = '';
   $('#sanitizeBtn').disabled = true;
   $('#clearBtn').classList.add('hidden');
   $('#resultsArea').classList.add('hidden');
@@ -4216,6 +4216,16 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// Builds "<strong>name</strong> (size)" via DOM API rather than innerHTML,
+// so a filename never passes through an HTML-sink at all.
+function setFileLabel(el, name, size) {
+  el.textContent = '';
+  const strong = document.createElement('strong');
+  strong.textContent = name;
+  el.appendChild(strong);
+  el.appendChild(document.createTextNode(` (${size})`));
+}
+
 // ---- Disclaimer modal ----
 const disclaimerAccepted = localStorage.getItem('disclaimerAccepted') === 'true';
 if (disclaimerAccepted) {
@@ -4322,7 +4332,7 @@ configInput.addEventListener('drop', (e) => {
   const reader = new FileReader();
   reader.onload = (ev) => {
     configInput.value = ev.target.result;
-    $('#fileLabel').innerHTML = `<strong>${escapeHtml(file.name)}</strong> (${formatSize(file.size)})`;
+    setFileLabel($('#fileLabel'), file.name, formatSize(file.size));
     $('#sanitizeBtn').disabled = false;
     updateConfigMeta(ev.target.result);
   };
@@ -4486,7 +4496,7 @@ $('#batchSanitizeBtn').addEventListener('click', () => {
   }
 
   const autoSaltChip = !salt
-    ? ` <span class="stat" style="color:var(--warning)" title="Save this salt to reproduce the same anonymization mapping later."><span class="dot" style="background:var(--warning)"></span> Auto-salt used <span class="count">${batchSalt}</span></span>`
+    ? ` <span class="stat" style="color:var(--warning)" title="Save this salt to reproduce the same anonymization mapping later."><span class="dot" style="background:var(--warning)"></span> Auto-salt used <span class="count">${escapeHtml(batchSalt)}</span></span>`
     : '';
   $('#batchStatsBar').innerHTML = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${batchFiles.length} files <span class="count">${totalReplacements} total replacements</span></div>${autoSaltChip}`;
 
