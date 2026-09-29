@@ -50,3 +50,9 @@ description = "MEC-13 pre-relabel description line in 7458b76"
 condition = "AND"
 commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
 paths = ['''^test/cases\.js$''']
+[[rules.allowlists]]
+description = "MEC-18 round-2 finding 4: synthetic truncated-PEM fixture (case 115), body is literal FAKE115* placeholder text, no real key material"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "line"
+regexes = ['''FAKE115''']
