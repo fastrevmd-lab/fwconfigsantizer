@@ -1349,6 +1349,7 @@ html.light .warnings-panel {
       <button class="btn-primary btn" id="batchSanitizeBtn" disabled>Sanitize All Files</button>
       <div id="batchResults" class="hidden">
         <div class="stats-bar" id="batchStatsBar"></div>
+        <div id="batchResidualWarning" class="hidden" style="margin:10px 0"></div>
         <button class="btn-success btn" id="batchDownloadBtn">Download Zip</button>
       </div>
     </div>
@@ -3554,10 +3555,19 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // formatting variant, this surfaces the leak in the returned result
   // instead of silently shipping it -- callers (the UI) must treat a
   // non-empty residualLeaks as a hard failure, not a warning.
+  //
+  // Uses the same word-boundary regex as the learned-value sweep above,
+  // not a plain substring test: a plain `.includes()` false-positives
+  // whenever one original is a substring of unrelated surviving text (e.g.
+  // original "alex" flags a false residual against surviving text
+  // "alexandria-acl"), and a hard fail must not trigger on that noise.
   const residualLeaks = [];
   for (const r of replacements) {
-    if (typeof r.original === 'string' && r.original.length > 3 && sanitized.includes(r.original)) {
-      residualLeaks.push({ type: r.type, original: r.original });
+    if (typeof r.original === 'string' && r.original.length > 3) {
+      const re = new RegExp(`(?<![A-Za-z0-9_])${escapeRegex(r.original)}(?![A-Za-z0-9_])`);
+      if (re.test(sanitized)) {
+        residualLeaks.push({ type: r.type, original: r.original });
+      }
     }
   }
 
@@ -3722,11 +3732,6 @@ function validateSanitized(sanitizedText, opts) {
         }
       }
     }
-
-    // Residual-original check surfaced as a hard, high-severity warning
-    // (see sanitizeConfig's own residualLeaks, which this mirrors for
-    // callers -- like the batch handler -- that only look at
-    // validateSanitized's output).
   });
 
   return warnings;
@@ -3861,7 +3866,7 @@ $('#sanitizeBtn').addEventListener('click', () => {
       snippet: '',
     });
   }
-  renderWarnings(warnings);
+  renderWarnings(warnings, currentResult.residualLeaks.length);
 });
 
 // Copy
@@ -4106,13 +4111,25 @@ function renderDiff(original, sanitized) {
   $('#diffView').innerHTML = html;
 }
 
-function renderWarnings(warnings) {
+// A residual leak (an original value that survived sanitization) must never
+// ship silently: while any are outstanding, lock Copy/Download so the only
+// way to get the output out of the tool is to explicitly acknowledge the
+// risk via the checkbox renderWarnings injects below.
+function setResidualGate(locked) {
+  ['copyBtn', 'dlSanitized', 'dlMapping', 'copyCsvBtn'].forEach((id) => {
+    const el = $('#' + id);
+    if (el) el.disabled = locked;
+  });
+}
+
+function renderWarnings(warnings, residualLeakCount = 0) {
   const panel = $('#warningsPanel');
   const list = $('#warningsList');
   const title = $('#warningsTitle');
 
   if (warnings.length === 0) {
     panel.classList.add('hidden');
+    setResidualGate(false);
     return;
   }
 
@@ -4124,6 +4141,16 @@ function renderWarnings(warnings) {
   if (medCount) parts.push(`${medCount} medium`);
   title.textContent = `Review needed: ${warnings.length} potential issue${warnings.length > 1 ? 's' : ''} found (${parts.join(', ')})`;
 
+  const ackHtml = residualLeakCount > 0 ? `
+    <div class="warning-item warning-ack">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="residualAckCheck">
+        I understand ${residualLeakCount} residual original value${residualLeakCount > 1 ? 's are' : ' is'}
+        still present in the output above, and want to copy/download it anyway.
+      </label>
+    </div>
+  ` : '';
+
   list.innerHTML = warnings.map(w => `
     <div class="warning-item">
       <span class="w-sev ${w.severity}">${w.severity}</span>
@@ -4131,7 +4158,14 @@ function renderWarnings(warnings) {
       <span class="w-msg">${escapeHtml(w.message)}</span>
       <span class="w-snippet">${escapeHtml(w.snippet)}</span>
     </div>
-  `).join('');
+  `).join('') + ackHtml;
+
+  if (residualLeakCount > 0) {
+    setResidualGate(true);
+    $('#residualAckCheck').addEventListener('change', (e) => setResidualGate(!e.target.checked));
+  } else {
+    setResidualGate(false);
+  }
 }
 
 function escapeHtml(str) {
@@ -4413,6 +4447,37 @@ $('#batchSanitizeBtn').addEventListener('click', () => {
     ? ` <span class="stat" style="color:var(--warning)" title="Save this salt to reproduce the same anonymization mapping later."><span class="dot" style="background:var(--warning)"></span> Auto-salt used <span class="count">${batchSalt}</span></span>`
     : '';
   $('#batchStatsBar').innerHTML = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${batchFiles.length} files <span class="count">${totalReplacements} total replacements</span></div>${autoSaltChip}`;
+
+  // A residual leak in even one file must not ship silently inside a
+  // successful-looking zip -- name the affected files and require an
+  // explicit acknowledgement before the zip can be downloaded, the same
+  // gate the single-file view applies (see setResidualGate).
+  const leaky = batchResults.filter(({ result }) => result.residualLeaks.length > 0);
+  const warningBox = $('#batchResidualWarning');
+  const downloadBtn = $('#batchDownloadBtn');
+  if (leaky.length > 0) {
+    warningBox.classList.remove('hidden');
+    warningBox.innerHTML = `
+      <div class="warning-item">
+        <span class="w-sev high">high</span>
+        <span class="w-msg">Residual original value(s) still present in: ${escapeHtml(leaky.map(f => f.name).join(', '))}</span>
+      </div>
+      <div class="warning-item warning-ack">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="batchResidualAckCheck">
+          I understand ${leaky.length} file${leaky.length > 1 ? 's have' : ' has'} a residual original value
+          still present, and want to download the zip anyway.
+        </label>
+      </div>
+    `;
+    downloadBtn.disabled = true;
+    $('#batchResidualAckCheck').addEventListener('change', (e) => { downloadBtn.disabled = !e.target.checked; });
+  } else {
+    warningBox.classList.add('hidden');
+    warningBox.innerHTML = '';
+    downloadBtn.disabled = false;
+  }
+
   $('#batchResults').classList.remove('hidden');
 });
 
