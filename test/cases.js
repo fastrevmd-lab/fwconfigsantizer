@@ -795,6 +795,26 @@ const cases = [
     leakTokens: ['FAKE110COMM'],
     mustSurvive: ['snmp-server host inside'],
   },
+
+  // ---------------------------------------------------------------------
+  // Regression cases from the H3b PR #10 round-2 review (request-changes
+  // findings 1-5). Each reproduces a leak, or an over-redaction, the
+  // review found in commit 66a306d.
+  // ---------------------------------------------------------------------
+  {
+    id: 111, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Round 2 finding 1: "key config-key password-encrypt X" -- the master key value itself must be redacted',
+    input: asa('key config-key password-encrypt FAKE111MASTERKEY\n'),
+    leakTokens: ['FAKE111MASTERKEY'],
+    mustSurvive: ['key config-key password-encrypt'],
+  },
+  {
+    id: 112, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Round 2 finding 1: the generic catch-all must not over-redact structural "key"/"password" sub-command verbs',
+    input: asa('crypto key generate rsa\nkey chain FAKE112CHAINNAME\npassword encryption aes\n'),
+    leakTokens: [],
+    mustSurvive: ['crypto key generate rsa', 'key chain FAKE112CHAINNAME', 'password encryption aes'],
+  },
 ];
 
 module.exports = { cases };

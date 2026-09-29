@@ -2271,6 +2271,20 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     }
   );
 
+  // IOS master encryption key: "key config-key password-encrypt <value>".
+  // Must run before the generic catch-all below, which would otherwise
+  // treat the literal word "config-key" as the secret value and leave the
+  // real master key untouched.
+  sanitized = sanitized.replace(
+    /(key\s+config-key\s+password-encrypt\s+)(\S+)/gi,
+    (match, prefix, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      const placeholder = `REDACTED_KEY_${counter.key++}`;
+      addReplacement('key', placeholder, value);
+      return `${prefix}${placeholder}`;
+    }
+  );
+
   // Generic keyword -> next-value catch-all (vendor-independent). Runs last,
   // after every vendor-specific rule above, so it only catches syntax none
   // of them special-case: bare IOS "line vty 0 4" -> "password X", ASA
@@ -2281,7 +2295,11 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // can't match inside a larger word (e.g. "psksecret-remote", "monkey"),
   // and the trailing \s+ requirement means a keyword with no space after it
   // (e.g. "keys", "password-hash") isn't touched here either -- those are
-  // handled by their own dedicated rules above.
+  // handled by their own dedicated rules above. The value is also rejected
+  // when it's a structural sub-command keyword rather than a secret (e.g.
+  // "key chain NAME", "crypto key generate rsa", "password encryption
+  // aes") -- those verbs describe what the *next* argument means, they
+  // aren't themselves secret material.
   sanitized = sanitized.replace(
     /(^|\s)((?:password|secret|key|key-string|pre-shared-key|psksecret|authentication-key|auth-key|api-key|passwd)\s+(?:(?:ENC|[0579])\s+)?)("[^"]*"|\S+)/gim,
     (match, lead, keywordPart, rawValue) => {
@@ -2289,6 +2307,7 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       const value = quoted ? rawValue.slice(1, -1) : rawValue;
       const GENERIC_KEYWORD_ENUMS = new Set([
         'encrypted', 'hidden', 'ascii-text', 'hexadecimal', 'plain-text-password-value',
+        'chain', 'generate', 'config-key', 'encryption', 'zeroize', 'import', 'export',
       ]);
       if (!value || value.startsWith('REDACTED_') || GENERIC_KEYWORD_ENUMS.has(value.toLowerCase())) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
