@@ -776,6 +776,18 @@ const cases = [
     leakTokens: ['FAKE107SECRET'],
     mustSurvive: ['server s1'],
   },
+  {
+    id: 108, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 3: XML element with an attribute on the opening tag, e.g. <bind-password encrypted="yes">X</bind-password>',
+    input: panos('<bind-password encrypted="yes">FAKE108BINDPW</bind-password>'),
+    leakTokens: ['FAKE108BINDPW'],
+  },
+  {
+    id: 109, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 3: CDATA-wrapped XML secret, e.g. <password><![CDATA[X]]></password>, and Junos display-xml nested <pre-shared-key><ascii-text>X</ascii-text></pre-shared-key>',
+    input: panos('<password><![CDATA[FAKE109CDATAPW]]></password><pre-shared-key><ascii-text>$9$FAKE109PSK</ascii-text></pre-shared-key>'),
+    leakTokens: ['FAKE109CDATAPW', '$9$FAKE109PSK'],
+  },
 ];
 
 module.exports = { cases };

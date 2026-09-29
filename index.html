@@ -1899,14 +1899,21 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // Generic XML element rule: any of these elements wraps a secret value
-  // directly as text content, regardless of vendor.
+  // directly as text content, regardless of vendor. The opening tag can
+  // carry attributes (e.g. <bind-password encrypted="yes">), and the value
+  // can be wrapped in CDATA -- both were previously unmatched and leaked.
+  // "ascii-text"/"hexadecimal"/"plain-text-password-value" are Junos
+  // display-xml's nested value elements under <pre-shared-key>, e.g.
+  // <pre-shared-key><ascii-text>$9$X</ascii-text></pre-shared-key>.
   sanitized = sanitized.replace(
-    /(<(?:secret|key|bind-password|authpwd|privpwd|authentication-key|auth-code|password|pre-shared-key|api-key|secret-key)>)([^<]+)(<\/)/gi,
-    (match, open, value, close) => {
-      if (value.trim().startsWith('REDACTED_')) return match;
+    /(<(?:secret|key|bind-password|authpwd|privpwd|authentication-key|auth-code|password|pre-shared-key|api-key|secret-key|ascii-text|hexadecimal|plain-text-password-value)(?:\s[^>]*)?>)(<!\[CDATA\[[\s\S]*?\]\]>|[^<]+)(<\/)/gi,
+    (match, open, rawValue, close) => {
+      const isCdata = rawValue.startsWith('<![CDATA[');
+      const value = (isCdata ? rawValue.slice(9, -3) : rawValue).trim();
+      if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
-      addReplacement('key', placeholder, value.trim());
-      return `${open}${placeholder}${close}`;
+      addReplacement('key', placeholder, value);
+      return `${open}${isCdata ? `<![CDATA[${placeholder}]]>` : placeholder}${close}`;
     }
   );
 
