@@ -722,6 +722,32 @@ const cases = [
     input: checkpoint('set message msgvalue "FAKE94MSG"\nset snmp contact "fakecontact94@example.corp"\nset snmp location "Fake Location 94"\n'),
     leakTokens: ['FAKE94MSG', 'fakecontact94@example.corp', 'Fake Location 94'],
   },
+
+  // ---------------------------------------------------------------------
+  // Regression cases from the H3b PR #10 review (request-changes findings
+  // 1-7). Each reproduces a leak the review found in commit a48d62f.
+  // ---------------------------------------------------------------------
+  {
+    id: 101, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 1: "enable password 7 X" -- the type-7 marker must not be eaten as the value',
+    input: asa('enable password 7 FAKE101ENABLEPW\n'),
+    leakTokens: ['FAKE101ENABLEPW'],
+    mustSurvive: ['enable password 7 '],
+  },
+  {
+    id: 102, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 1: "radius-server key 7 X" -- same type-7 marker bug',
+    input: asa('radius-server key 7 FAKE102RADKEY\n'),
+    leakTokens: ['FAKE102RADKEY'],
+    mustSurvive: ['radius-server key 7 '],
+  },
+  {
+    id: 103, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 1: "ip ospf message-digest-key 1 md5 7 X" -- same type-7 marker bug',
+    input: asa('ip ospf message-digest-key 1 md5 7 FAKE103OSPFKEY\n'),
+    leakTokens: ['FAKE103OSPFKEY'],
+    mustSurvive: ['ip ospf message-digest-key 1 md5 7 '],
+  },
 ];
 
 module.exports = { cases };

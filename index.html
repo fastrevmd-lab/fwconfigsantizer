@@ -1935,13 +1935,16 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // ASA: enable password/secret, username ... secret, password 7
+  // "enable password 7 X" carries a type-7 marker before the value -- without
+  // the optional-prefix group, "7" itself gets captured and redacted as if it
+  // were the value, leaving the real value X to leak in the clear.
   sanitized = sanitized.replace(
-    /(\benable\s+password\s+)(\S+)/gi,
-    (match, prefix, value) => {
+    /(\benable\s+password\s+)(?:(7)\s+)?(\S+)/gi,
+    (match, prefix, marker, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_HASH_${counter.hash++}`;
       addReplacement('hash', placeholder, value);
-      return `${prefix}${placeholder}`;
+      return `${prefix}${marker ? marker + ' ' : ''}${placeholder}`;
     }
   );
   sanitized = sanitized.replace(
@@ -1989,13 +1992,14 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  // Same type-7/5/9/ENC prefix-marker issue as "enable password" above.
   sanitized = sanitized.replace(
-    /(\bradius-server\s+key\s+)(\S+)/gi,
-    (match, prefix, value) => {
+    /(\bradius-server\s+key\s+)(?:(ENC|[0579])\s+)?(\S+)/gi,
+    (match, prefix, marker, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
       addReplacement('key', placeholder, value);
-      return `${prefix}${placeholder}`;
+      return `${prefix}${marker ? marker + ' ' : ''}${placeholder}`;
     }
   );
   sanitized = sanitized.replace(
@@ -2027,13 +2031,14 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       return `${prefix}${placeholder}`;
     }
   );
+  // Same type-7/5/9/ENC prefix-marker issue as "enable password" above.
   sanitized = sanitized.replace(
-    /(\bip\s+ospf\s+message-digest-key\s+\d+\s+md5\s+)(\S+)/gi,
-    (match, prefix, value) => {
+    /(\bip\s+ospf\s+message-digest-key\s+\d+\s+md5\s+)(?:(ENC|[0579])\s+)?(\S+)/gi,
+    (match, prefix, marker, value) => {
       if (value.startsWith('REDACTED_')) return match;
       const placeholder = `REDACTED_KEY_${counter.key++}`;
       addReplacement('key', placeholder, value);
-      return `${prefix}${placeholder}`;
+      return `${prefix}${marker ? marker + ' ' : ''}${placeholder}`;
     }
   );
   sanitized = sanitized.replace(
