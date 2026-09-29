@@ -1842,6 +1842,20 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     }
   );
 
+  // A BEGIN line with no matching END (truncated paste, a copy that lost
+  // its footer) must not fail open and ship the key body verbatim. Redact
+  // from BEGIN to the next blank line or end of input -- unlike the paired
+  // rule above this can't verify it captured a complete block, so it's
+  // deliberately over-eager rather than risk leaving key material behind.
+  sanitized = sanitized.replace(
+    /-----BEGIN ([A-Z0-9 ]+)-----(?:(?!-----END \1-----)[\s\S])*?(?:\n[ \t]*\n|$)/g,
+    () => {
+      const placeholder = `REDACTED_CERT_${counter.cert++}`;
+      addReplacement('certificate', placeholder, '[TRUNCATED PEM BLOCK]');
+      return placeholder;
+    }
+  );
+
   // XML/element-style key/cert tags
   sanitized = sanitized.replace(
     /(<(?:private-key|certificate-key|ssl-key|public-key)>)([^<]+)(<\/)/gi,

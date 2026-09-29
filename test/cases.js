@@ -828,6 +828,12 @@ const cases = [
     input: 'https://fakeuser114:FAKE114URLPW@wiki.fakeorg114.corp/x?token=FAKE114TOKEN\n',
     leakTokens: ['FAKE114URLPW', 'FAKE114TOKEN'],
   },
+  {
+    id: 115, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Round 2 finding 4: a truncated PEM block (no matching END line) must not fail open',
+    input: '-----BEGIN RSA PRIVATE KEY-----\nMIIB114FAKE115KEYBODYFAKE115\nMIIC115MORE115FAKE115BODY115\n',
+    leakTokens: ['FAKE115KEYBODYFAKE115', 'MORE115FAKE115BODY115'],
+  },
 ];
 
 module.exports = { cases };
