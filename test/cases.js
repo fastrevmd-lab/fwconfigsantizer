@@ -788,6 +788,13 @@ const cases = [
     input: panos('<password><![CDATA[FAKE109CDATAPW]]></password><pre-shared-key><ascii-text>$9$FAKE109PSK</ascii-text></pre-shared-key>'),
     leakTokens: ['FAKE109CDATAPW', '$9$FAKE109PSK'],
   },
+  {
+    id: 110, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Finding 4: ASA "snmp-server host inside 10.1.1.1 community X" -- two tokens between "host" and "community"',
+    input: asa('snmp-server host inside 10.1.1.1 community FAKE110COMM\n'),
+    leakTokens: ['FAKE110COMM'],
+    mustSurvive: ['snmp-server host inside'],
+  },
 ];
 
 module.exports = { cases };
