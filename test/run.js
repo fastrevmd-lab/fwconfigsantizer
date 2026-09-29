@@ -62,7 +62,7 @@ function runResidualOriginalCheck(fixtureRuns) {
   }
   const ok = violations.length === 0;
   return {
-    id: 100, group: 'cross-cutting', expected: 'FAIL',
+    id: 100, group: 'cross-cutting', expected: 'PASS',
     description: 'Residual-original check: no replacements[i].original longer than 3 characters appears in the output',
     actualStatus: ok ? 'PASS' : 'FAIL',
     detail: ok
