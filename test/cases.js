@@ -857,6 +857,15 @@ const cases = [
       'https://portal.fakeacme117.net?token=FAKE117NOPATHTOKEN\n',
     leakTokens: ['FAKE117IPHOSTKEY', 'FAKE117BAREHOSTPW', 'FAKE117NOPATHTOKEN'],
   },
+  {
+    id: 118, group: 'regression-h3b-review', expected: 'PASS',
+    description:
+      'Round 3 finding 2: bare "passphrase" keyword (no hyphen) not covered by the "*-pass-phrase" alternation -- FortiOS and IOS both use the unhyphenated form',
+    input:
+      'set passphrase FAKE118FORTIPASSPHRASE\n' +
+      'crypto key export rsa k pem passphrase FAKE118IOSPASSPHRASE\n',
+    leakTokens: ['FAKE118FORTIPASSPHRASE', 'FAKE118IOSPASSPHRASE'],
+  },
 ];
 
 module.exports = { cases };
