@@ -32,6 +32,17 @@ condition = "AND"
 paths = ['''^test/cases\.js$''']
 regexTarget = "line"
 regexes = ['''FAKE115''']
+# MEC-731 re-review NEW-1: case 119 adds synthetic CRLF/trailing-space/
+# same-line BEGIN-marker PEM fixtures to reproduce the fail-open regression
+# fixed in this PR. Body content is literal FAKE119* placeholder text, no
+# real key material (see the pem-private-key allowlist below for the
+# matching header-line finding).
+[[rules.allowlists]]
+description = "MEC-731 re-review NEW-1: synthetic CRLF/trailing-space/same-line PEM fixtures in case 119"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "line"
+regexes = ['''FAKE119''']
 
 # The two vendor rules below (added by this PR, MEC-30) are not in gitleaks'
 # default ruleset, so PR #4's test fixtures were never checked against them
@@ -67,3 +78,9 @@ condition = "AND"
 paths = ['''^test/cases\.js$''']
 regexTarget = "line"
 regexes = ['''FAKE115''']
+[[rules.allowlists]]
+description = "MEC-731 re-review NEW-1: synthetic CRLF/trailing-space/same-line PEM fixtures (case 119), body is literal FAKE119* placeholder text, no real key material"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "line"
+regexes = ['''FAKE119''']
