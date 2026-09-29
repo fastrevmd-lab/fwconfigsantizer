@@ -3299,12 +3299,17 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   //     keyword introduces them.
   // -----------------------------------------------------------------------
   sanitized = sanitized.replace(
-    /\b((?:dc|cn|ou|o|uid)=[^\s"',;)<>]+(?:,\s*(?:dc|cn|ou|o|uid)=[^\s"',;)<>]+)+)/gi,
+    /\b((?:dc|cn|ou|o|uid)=[^,"'<>;)\n]+(?:,\s*(?:dc|cn|ou|o|uid)=[^,"'<>;)\n]+)+)/gi,
     (match) => {
       if (match.startsWith('REDACTED_')) return match;
+      // A DN component value (e.g. "OU=Firewall Admins") may contain
+      // internal spaces, but trailing whitespace picked up by the greedy
+      // value class belongs to whatever follows the DN, not to it.
+      const trimmed = match.replace(/\s+$/, '');
+      const trailing = match.slice(trimmed.length);
       const placeholder = `REDACTED_DN_${counter.dn++}`;
-      addReplacement('ldap_dn', placeholder, match);
-      return placeholder;
+      addReplacement('ldap_dn', placeholder, trimmed);
+      return placeholder + trailing;
     }
   );
 

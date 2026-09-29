@@ -834,6 +834,13 @@ const cases = [
     input: '-----BEGIN RSA PRIVATE KEY-----\nMIIB114FAKE115KEYBODYFAKE115\nMIIC115MORE115FAKE115BODY115\n',
     leakTokens: ['FAKE115KEYBODYFAKE115', 'MORE115FAKE115BODY115'],
   },
+  {
+    id: 116, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Round 2 finding 5: an LDAP DN component containing a space must be fully redacted',
+    input: 'ldap-base-dn OU=Firewall Admins,DC=fakeacme116,DC=local\n',
+    leakTokens: ['Firewall Admins', 'fakeacme116'],
+    mustSurvive: ['ldap-base-dn'],
+  },
 ];
 
 module.exports = { cases };
