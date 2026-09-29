@@ -822,6 +822,12 @@ const cases = [
     leakTokens: ['FAKE113PASSPHRASE'],
     mustSurvive: ['private-key-pass-phrase'],
   },
+  {
+    id: 114, group: 'regression-h3b-review', expected: 'PASS',
+    description: 'Round 2 finding 3: a secret in a URL query string, not just the userinfo, must be redacted',
+    input: 'https://fakeuser114:FAKE114URLPW@wiki.fakeorg114.corp/x?token=FAKE114TOKEN\n',
+    leakTokens: ['FAKE114URLPW', 'FAKE114TOKEN'],
+  },
 ];
 
 module.exports = { cases };

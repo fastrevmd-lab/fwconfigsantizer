@@ -3438,10 +3438,14 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   sanitized = sanitized.replace(
     /((?:https?|ldaps?|ftp):\/\/)(?:(REDACTED_USERINFO_\d+)@)?([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})((?::\d+)?(?:\/[^\s"'<>]*)?)/gi,
     (match, scheme, userinfo, domain, pathPart) => {
-      // Skip already-sanitized domains
-      if (/^example(?:-\d+)?\.net$/.test(domain)) return match;
-      if (/^host-\d+\.example\.net$/.test(domain)) return match;
-      const placeholder = resolveDomainPlaceholder(domain, 'url');
+      // Domain may already be sanitized (e.g. an earlier pass replaced a
+      // "user:pass@host" userinfo/domain pair it mistook for an email
+      // address). Reuse it as-is in that case, but keep running
+      // redactQueryValues below regardless -- an already-redacted domain
+      // must never short-circuit query-string redaction.
+      const alreadySanitized =
+        /^example(?:-\d+)?\.net$/.test(domain) || /^host-\d+\.example\.net$/.test(domain);
+      const placeholder = alreadySanitized ? domain : resolveDomainPlaceholder(domain, 'url');
       const userinfoPart = userinfo ? `${userinfo}@` : '';
       return `${scheme}${userinfoPart}${placeholder}${redactQueryValues(pathPart || '')}`;
     }
