@@ -123,7 +123,12 @@ async function case96(engine) {
   const N = 254;
   const lines = [];
   for (let i = 1; i <= N; i++) {
-    lines.push(`set FAKE-HOST-${i} address 192.0.2.${i}`);
+    // Avoid RFC 5737 (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) and
+    // RFC 2544 (198.18.0.0/15): the engine intentionally passes those through
+    // unredacted for idempotency. 100.64.0.0/10 (RFC 6598 shared address
+    // space) is reserved/non-routable but not in that passthrough list, so
+    // it still exercises the real distinct-placeholder path.
+    lines.push(`set FAKE-HOST-${i} address 100.64.1.${i}`);
   }
   // Force vendor 'unknown' (no vendor markers) so the generic IPv4 rule runs
   // regardless of vendor gating.
