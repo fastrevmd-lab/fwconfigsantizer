@@ -1847,8 +1847,16 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // from BEGIN to the next blank line or end of input -- unlike the paired
   // rule above this can't verify it captured a complete block, so it's
   // deliberately over-eager rather than risk leaving key material behind.
+  // A legacy encrypted PEM ("Proc-Type:"/"DEK-Info:" headers) has its own
+  // header/body blank-line separator before the real body even starts, so
+  // an optional run of header lines (and the blank line after them) is
+  // skipped before hunting for the blank line that actually ends the block
+  // -- otherwise the match stops right after the headers and the ciphertext
+  // body survives untouched. The terminator is a lookahead rather than part
+  // of the match so the blank line itself stays in the output instead of
+  // being consumed and gluing the next line onto the placeholder.
   sanitized = sanitized.replace(
-    /-----BEGIN ([A-Z0-9 ]+)-----(?:(?!-----END \1-----)[\s\S])*?(?:\n[ \t]*\n|$)/g,
+    /-----BEGIN ([A-Z0-9 ]+)-----\n(?:[A-Za-z-]+:[^\n]*\n)*(?:[ \t]*\n)?(?:(?!-----END \1-----)[\s\S])*?(?=\n[ \t]*\n|$)/g,
     () => {
       const placeholder = `REDACTED_CERT_${counter.cert++}`;
       addReplacement('certificate', placeholder, '[TRUNCATED PEM BLOCK]');

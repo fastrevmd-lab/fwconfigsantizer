@@ -830,9 +830,21 @@ const cases = [
   },
   {
     id: 115, group: 'regression-h3b-review', expected: 'PASS',
-    description: 'Round 2 finding 4: a truncated PEM block (no matching END line) must not fail open',
-    input: '-----BEGIN RSA PRIVATE KEY-----\nMIIB114FAKE115KEYBODYFAKE115\nMIIC115MORE115FAKE115BODY115\n',
-    leakTokens: ['FAKE115KEYBODYFAKE115', 'MORE115FAKE115BODY115'],
+    description:
+      'Round 2 finding 4 / round 3 finding 3: a truncated PEM block (no matching END line) must not fail open, must redact a legacy encrypted key\'s ciphertext body past its Proc-Type/DEK-Info headers (not just the headers themselves), and must not swallow the blank line that separates the block from the next stanza',
+    input:
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIB114FAKE115KEYBODYFAKE115\nMIIC115MORE115FAKE115BODY115\n' +
+      '\n' +
+      '-----BEGIN DSA PRIVATE KEY-----\n' + // FAKE115 -- synthetic fixture, see .gitleaks.toml
+      'Proc-Type: 4,ENCRYPTED\n' +
+      'DEK-Info: AES-128-CBC,FAKE115DEKINFOSALT1234\n' +
+      '\n' +
+      'MIIC115ENCFAKE115BODYONE\n' +
+      'MIIC115ENCFAKE115BODYTWO\n' +
+      '\n' +
+      'hostname fw-FAKE115NEXTLINE\n',
+    leakTokens: ['FAKE115KEYBODYFAKE115', 'MORE115FAKE115BODY115', 'ENCFAKE115BODYONE', 'ENCFAKE115BODYTWO'],
+    mustSurvive: ['\nhostname'],
   },
   {
     id: 116, group: 'regression-h3b-review', expected: 'PASS',
