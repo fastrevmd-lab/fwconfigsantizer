@@ -878,6 +878,25 @@ const cases = [
       'crypto key export rsa k pem passphrase FAKE118IOSPASSPHRASE\n',
     leakTokens: ['FAKE118FORTIPASSPHRASE', 'FAKE118IOSPASSPHRASE'],
   },
+
+  // ---------------------------------------------------------------------
+  // Regression case from the round-3 re-review (MEC-731, NEW-1): the
+  // truncated-PEM fix landed in commit 2863395 required a bare "\n"
+  // straight after "-----BEGIN X-----", so a CRLF line ending, trailing
+  // whitespace before the line break, or a body glued onto the same line
+  // as the BEGIN marker all skipped the match and shipped the key
+  // verbatim.
+  // ---------------------------------------------------------------------
+  {
+    id: 119, group: 'regression-h3b-review', expected: 'PASS',
+    description:
+      'Re-review NEW-1: a truncated PEM block must redact on CRLF line endings, a trailing space after "-----BEGIN X-----", and a body glued onto the same line as the BEGIN marker',
+    input:
+      '-----BEGIN RSA PRIVATE KEY-----\r\nFAKE119CRLFBODYONE\r\nFAKE119CRLFBODYTWO\r\n' +
+      '-----BEGIN EC PRIVATE KEY----- \nFAKE119TRAILSPACEBODY\n' +
+      'x -----BEGIN OPENSSH PRIVATE KEY-----FAKE119ONELINEBODY\n',
+    leakTokens: ['FAKE119CRLFBODYONE', 'FAKE119CRLFBODYTWO', 'FAKE119TRAILSPACEBODY', 'FAKE119ONELINEBODY'],
+  },
 ];
 
 module.exports = { cases };

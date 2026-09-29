@@ -1855,8 +1855,12 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // body survives untouched. The terminator is a lookahead rather than part
   // of the match so the blank line itself stays in the output instead of
   // being consumed and gluing the next line onto the placeholder.
+  // The line break after "-----BEGIN X-----" is optional and CRLF-aware
+  // (\r?\n): trailing spaces before it, a CRLF instead of a bare LF, or no
+  // line break at all (the body starts on the same line) must not stop the
+  // match -- any of those previously left the whole block unredacted.
   sanitized = sanitized.replace(
-    /-----BEGIN ([A-Z0-9 ]+)-----\n(?:[A-Za-z-]+:[^\n]*\n)*(?:[ \t]*\n)?(?:(?!-----END \1-----)[\s\S])*?(?=\n[ \t]*\n|$)/g,
+    /-----BEGIN ([A-Z0-9 ]+)-----[ \t]*(?:\r?\n(?:[A-Za-z-]+:[^\r\n]*\r?\n)*(?:[ \t]*\r?\n)?)?(?:(?!-----END \1-----)[\s\S])*?(?=\r?\n[ \t]*\r?\n|$)/g,
     () => {
       const placeholder = `REDACTED_CERT_${counter.cert++}`;
       addReplacement('certificate', placeholder, '[TRUNCATED PEM BLOCK]');
