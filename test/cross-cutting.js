@@ -148,7 +148,7 @@ function case97(engine) {
   const urlEntry = result.replacements.find((r) => r.type === 'url');
   const distinct = Boolean(domainEntry) && Boolean(urlEntry) && domainEntry.placeholder !== urlEntry.placeholder;
   return {
-    id: 97, group: 'cross-cutting', expected: 'FAIL',
+    id: 97, group: 'cross-cutting', expected: 'PASS',
     description: 'A domain and an unrelated URL host get distinct placeholders',
     actualStatus: distinct ? 'PASS' : 'FAIL',
     detail: `domain -> ${domainEntry && domainEntry.placeholder}, url -> ${urlEntry && urlEntry.placeholder}`,
