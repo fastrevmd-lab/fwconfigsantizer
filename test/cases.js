@@ -841,6 +841,22 @@ const cases = [
     leakTokens: ['Firewall Admins', 'fakeacme116'],
     mustSurvive: ['ldap-base-dn'],
   },
+
+  // ---------------------------------------------------------------------
+  // Regression cases from the H3b PR #10 round-3 review (request-changes
+  // findings 1-3). Each reproduces a leak the review found in commit
+  // 66a306d that survived the round-2 fixes.
+  // ---------------------------------------------------------------------
+  {
+    id: 117, group: 'regression-h3b-review', expected: 'PASS',
+    description:
+      'Round 3 finding 1: URL query-string secrets must be redacted even when the host is a bare IP, a dot-less hostname, or the URL has no path before the query',
+    input:
+      'https://192.0.2.10/api?key=FAKE117IPHOSTKEY\n' +
+      'https://fw01/api?password=FAKE117BAREHOSTPW\n' +
+      'https://portal.fakeacme117.net?token=FAKE117NOPATHTOKEN\n',
+    leakTokens: ['FAKE117IPHOSTKEY', 'FAKE117BAREHOSTPW', 'FAKE117NOPATHTOKEN'],
+  },
 ];
 
 module.exports = { cases };

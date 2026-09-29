@@ -3454,8 +3454,19 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     }
   );
 
+  // Query-value redaction must not depend on the host being a dotted,
+  // alpha-TLD domain with a leading-slash path -- an IP-host or
+  // bare-hostname URL (PAN-OS XML-API keygen, a plain "https://fw01/api?
+  // password=X") or a path-less "?query" is exactly the shape most likely
+  // to carry a live secret. Run it as its own pass, before the FQDN-shaped
+  // domain rule below, over any http(s)/ldap(s)/ftp URL regardless of host.
   sanitized = sanitized.replace(
-    /((?:https?|ldaps?|ftp):\/\/)(?:(REDACTED_USERINFO_\d+)@)?([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})((?::\d+)?(?:\/[^\s"'<>]*)?)/gi,
+    /((?:https?|ldaps?|ftp):\/\/)([^\s"'<>]+)/gi,
+    (match, scheme, rest) => `${scheme}${redactQueryValues(rest)}`
+  );
+
+  sanitized = sanitized.replace(
+    /((?:https?|ldaps?|ftp):\/\/)(?:(REDACTED_USERINFO_\d+)@)?([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})((?::\d+)?(?:[\/?][^\s"'<>]*)?)/gi,
     (match, scheme, userinfo, domain, pathPart) => {
       // Domain may already be sanitized (e.g. an earlier pass replaced a
       // "user:pass@host" userinfo/domain pair it mistook for an email
