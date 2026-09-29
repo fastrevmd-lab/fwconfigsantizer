@@ -198,7 +198,7 @@ const cases = [
     leakTokens: ['fakeuser23:FAKEPASS23'],
   },
   {
-    id: 24, group: 'junos-set', expected: 'PASS',
+    id: 24, group: 'junos-set', expected: 'PASS', // fixed: MAC addresses now redacted (M21)
     description: 'mac 00:00:5e:00:53:01',
     input: junos('set interfaces irb unit 24 mac 00:00:5e:00:53:24;\n'),
     leakTokens: ['00:00:5e:00:53:24'],
@@ -225,7 +225,7 @@ const cases = [
     leakTokens: ['FAKEPLAIN27'],
   },
   {
-    id: 28, group: 'junos-set', expected: 'PASS',
+    id: 28, group: 'junos-set', expected: 'PASS', // fixed: IPv4 "_" boundary (M21)
     description: 'address H_192.0.2.10 …',
     input: junos('set security address-book global address H_192.0.2.10 192.0.2.10/32;\n'),
     leakTokens: ['H_192.0.2.10'],
@@ -358,13 +358,13 @@ const cases = [
     leakTokens: ['dc=fakeorg44,dc=example', 'cn=fakebind44', '-AQ==FAKEBINDPW44=='],
   },
   {
-    id: 45, group: 'panos', expected: 'PASS',
+    id: 45, group: 'panos', expected: 'PASS', // fixed: generic PEM regex + <public-key>/<common-name> handling (M21)
     description: '<common-name> and <public-key> certificate body',
     input: panos('<common-name>fakeorg45-ca.internal</common-name><public-key>-----BEGIN PUBLIC KEY-----\nFAKEKEYDATA45\n-----END PUBLIC KEY-----</public-key>'),
     leakTokens: ['fakeorg45-ca.internal', 'FAKEKEYDATA45'],
   },
   {
-    id: 46, group: 'panos', expected: 'PASS',
+    id: 46, group: 'panos', expected: 'PASS', // fixed: IPv6 "<" boundary (M21)
     description: '<ip>fd12:3456:789a:4::5</ip>',
     input: panos('<ip>fd12:3456:789a:4::5</ip>'),
     leakTokens: ['fd12:3456:789a:4::5'],
@@ -490,7 +490,7 @@ const cases = [
     leakTokens: ['dc=fakeorg63,dc=example', 'cn=fakebind63'],
   },
   {
-    id: 64, group: 'fortios', expected: 'PASS',
+    id: 64, group: 'fortios', expected: 'PASS', // fixed: generic PEM regex covers CERTIFICATE, not just PRIVATE KEY (M21)
     description: 'set certificate "-----BEGIN CERTIFICATE-----…"',
     input: fortios('config vpn certificate local\n    edit "FAKECERT64"\n        set certificate "-----BEGIN CERTIFICATE-----\nFAKECERTDATA64\n-----END CERTIFICATE-----"\n    next\nend\n'),
     leakTokens: ['FAKECERTDATA64'],
@@ -616,7 +616,7 @@ const cases = [
     leakTokens: ['FAKE-DB80', 'Fake internal database server 80'],
   },
   {
-    id: 81, group: 'asa-ios', expected: 'PASS',
+    id: 81, group: 'asa-ios', expected: 'PASS', // fixed: trustpoint fqdn/subject-name CN + Cisco cert chain hex block (M21)
     description: 'Trustpoint subject-name / fqdn / cert-chain hex',
     input: asa(
       'crypto ca trustpoint FAKETP81\n' +
@@ -647,7 +647,7 @@ const cases = [
     leakTokens: ['fakeuser83'],
   },
   {
-    id: 84, group: 'asa-ios', expected: 'PASS',
+    id: 84, group: 'asa-ios', expected: 'PASS', // fixed: MAC addresses now redacted (M21)
     description: 'mac-address 0000.5e00.5302',
     input: asa('interface GigabitEthernet0/2\n mac-address 0000.5e00.5384\n'),
     leakTokens: ['0000.5e00.5384'],
@@ -677,7 +677,7 @@ const cases = [
     leakTokens: ['64561', '64562:100', '64563:100'],
   },
   {
-    id: 88, group: 'asa-ios', expected: 'PASS',
+    id: 88, group: 'asa-ios', expected: 'PASS', // fixed: generic PEM regex covers OPENSSH PRIVATE KEY (M21)
     description: 'Embedded OPENSSH private-key PEM block',
     input: asa('crypto key generate rsa\n! embedded key material below\n-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEKEYDATA88\n-----END OPENSSH PRIVATE KEY-----\n'),
     leakTokens: ['FAKEKEYDATA88'],

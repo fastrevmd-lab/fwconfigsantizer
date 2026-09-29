@@ -3,6 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--
+  CSP: default-src 'none' denies everything (including network egress) by
+  default; connect-src 'none' is listed explicitly so fetch/XHR/WebSocket
+  stay blocked even if a future edit adds another directive that would
+  otherwise widen the default-src fallback. script-src is a hash of the
+  single inline <script> block below (no 'unsafe-inline'/'unsafe-eval'),
+  so any injected script (e.g. via an XSS in a rendered config value) can't
+  execute. style-src needs 'unsafe-inline' because the UI renders many
+  inline style="" attributes dynamically; that's a narrower risk than
+  script injection and doesn't enable network egress. If the inline
+  script block's contents change, recompute the hash with (lastIndexOf, not
+  indexOf: this comment's own text contains that opening/closing tag as a
+  literal substring, ahead of the real one):
+    node -e "const fs=require('fs');const h=fs.readFileSync('index.html','utf8');const tag='<'+'script>';const s=h.lastIndexOf(tag)+tag.length;const e=h.lastIndexOf('</'+'script>');console.log('sha256-'+require('crypto').createHash('sha256').update(h.slice(s,e)).digest('base64'))"
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-GkvtoGWn0fyy9x3WM9AOj71YMNan2HeH/xmXCcvrk6M='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'">
 <title>Firewall Config Sanitizer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><rect width='120' height='120' fill='%230B0D12'/><path d='M18,96 L18,32 L60,74 L102,32 L102,96' fill='none' stroke='%234DD0C8' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/><circle cx='18' cy='96' r='7' fill='%234DD0C8'/><circle cx='18' cy='32' r='7' fill='%234DD0C8'/><circle cx='102' cy='32' r='7' fill='%234DD0C8'/><circle cx='102' cy='96' r='7' fill='%234DD0C8'/><circle cx='60' cy='74' r='11' fill='%230D9488'/><circle cx='60' cy='74' r='5.5' fill='%23B7F5F0'/></svg>">
 <style>
@@ -1152,6 +1168,8 @@ html.light .warnings-panel {
         <label class="opt-check"><input type="checkbox" data-opt="sysHostname" checked> Device Name</label>
         <label class="opt-check"><input type="checkbox" data-opt="urls" checked> URLs</label>
         <label class="opt-check"><input type="checkbox" data-opt="interfaceNames"> Interfaces</label>
+        <label class="opt-check"><input type="checkbox" data-opt="macAddresses" checked> MAC Addresses</label>
+        <label class="opt-check"><input type="checkbox" data-opt="serialNumbers" checked> Serial Numbers</label>
         <button type="button" class="toggle-all-btn" id="allOnBtn" title="Check all categories">All On</button>
         <button type="button" class="toggle-all-btn" id="allOffBtn" title="Uncheck all categories">All Off</button>
       </div>
@@ -1183,7 +1201,7 @@ html.light .warnings-panel {
           <button class="btn" id="resetPresetBtn" style="font-size:11px;padding:4px 10px">Reset Defaults</button>
         </div>
       </div>
-      <textarea id="configInput" placeholder="Paste your firewall configuration here, drag &amp; drop a file, or upload above.&#10;&#10;Supported: Cisco ASA/FTD, FortiGate, Palo Alto PAN-OS, Juniper SRX"></textarea>
+      <textarea id="configInput" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" data-gramm="false" placeholder="Paste your firewall configuration here, drag &amp; drop a file, or upload above.&#10;&#10;Supported: Cisco ASA/FTD, FortiGate, Palo Alto PAN-OS, Juniper SRX"></textarea>
       <div class="config-meta" id="configMeta"></div>
     </div>
 
@@ -1289,6 +1307,10 @@ html.light .warnings-panel {
           <span class="warnings-title" id="warningsTitle"></span>
         </div>
         <div class="warnings-list" id="warningsList"></div>
+        <label id="warningsAckRow" class="hidden" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-dim)">
+          <input type="checkbox" id="warningsAckCheck">
+          I have reviewed the high-severity warnings above before downloading.
+        </label>
       </div>
 
       <div class="output-section">
@@ -1349,7 +1371,16 @@ html.light .warnings-panel {
       <button class="btn-primary btn" id="batchSanitizeBtn" disabled>Sanitize All Files</button>
       <div id="batchResults" class="hidden">
         <div class="stats-bar" id="batchStatsBar"></div>
-        <div id="batchResidualWarning" class="hidden" style="margin:10px 0"></div>
+        <div class="warnings-panel hidden" id="batchWarningsPanel">
+          <div class="warnings-header">
+            <span class="warnings-title" id="batchWarningsTitle"></span>
+          </div>
+          <div class="warnings-list" id="batchWarningsList"></div>
+        </div>
+        <label id="batchWarningsAckRow" class="hidden" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text-dim)">
+          <input type="checkbox" id="batchWarningsAckCheck">
+          I have reviewed the high-severity warnings above before downloading.
+        </label>
         <button class="btn-success btn" id="batchDownloadBtn">Download Zip</button>
       </div>
     </div>
@@ -1525,75 +1556,169 @@ function isDocumentationIPv4(ip) {
 }
 
 /**
- * Simple 32-bit hash (FNV-1a) for deterministic anonymization.
- * @param {string} str
- * @returns {number} unsigned 32-bit integer
+ * Loopback, link-local and multicast IPv4 addresses aren't identifying
+ * information -- they're the same on every network -- so they pass through
+ * sanitization unchanged instead of being anonymized. Also closes off a
+ * known-plaintext lever: 127.0.0.1 appears in almost every firewall config,
+ * so anonymizing it used to hand an attacker a free (plaintext, ciphertext)
+ * pair to brute-force the salt with.
+ * @param {string} ip - dotted quad
+ * @returns {boolean}
  */
-function fnv1a(str) {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  // Avalanche finalizer: FNV-1a's low bits are biased, so mix them
-  hash = ((hash >>> 16) ^ hash) >>> 0;
-  hash = Math.imul(hash, 0x45d9f3b);
-  hash = ((hash >>> 16) ^ hash) >>> 0;
-  return hash;
+function isPassthroughIPv4(ip) {
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 127) return true; // loopback (127.0.0.0/8)
+  if (a === 169 && b === 254) return true; // link-local (169.254.0.0/16)
+  if (a >= 224) return true; // multicast (224.0.0.0/4) + reserved (240.0.0.0/4)
+  return false;
+}
+
+/**
+ * Draw a 32-byte salt from the platform CSPRNG for batch mode when the user
+ * didn't supply one. Replaces `'batch-' + Date.now().toString(36)`, whose
+ * output is only as hard to guess as the run's wall-clock time.
+ * @returns {string}
+ */
+function randomSalt() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return 'batch-' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Stretch a salt (user-supplied or from randomSalt()) into a non-extractable
+ * HMAC-SHA-256 key via PBKDF2. Stretching means a short/guessable salt still
+ * costs an attacker real work per candidate, instead of one FNV-1a
+ * evaluation (millions of candidates per second).
+ * @param {string} salt
+ * @returns {Promise<CryptoKey>}
+ */
+async function deriveHmacKey(salt) {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', encoder.encode(salt), 'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: encoder.encode('fwconfigsantizer:ip-anonymization:v1'),
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+}
+
+/**
+ * One HMAC-SHA-256 evaluation collapsed to a single pseudorandom bit, cached
+ * by message so repeated (prefix, bit) pairs -- common within one file, since
+ * addresses cluster into a handful of subnets -- cost one WebCrypto call
+ * instead of one per address.
+ * @param {CryptoKey} hmacKey
+ * @param {string} message
+ * @param {Map<string, number>} cache
+ * @returns {Promise<number>} 0 or 1
+ */
+async function hmacBit(hmacKey, message, cache) {
+  if (cache.has(message)) return cache.get(message);
+  const encoder = new TextEncoder();
+  const signature = await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(message));
+  const bit = new Uint8Array(signature)[0] & 1;
+  cache.set(message, bit);
+  return bit;
 }
 
 /**
  * Prefix-preserving IP anonymization.
  * IPs sharing a common prefix will share the same prefix after anonymization.
- * Uses a hash-based approach seeded by salt to flip bits at each prefix level.
+ * For each bit position, an HMAC-SHA-256 keyed PRF (keyed by a
+ * PBKDF2-stretched salt, see deriveHmacKey) decides whether to flip that bit.
+ * Unlike FNV-1a this can't be re-evaluated fast enough to brute-force the
+ * salt from a known-plaintext mapping entry.
  * @param {string} ip - dotted quad
- * @param {string} salt - user-provided salt for deterministic results
+ * @param {CryptoKey} hmacKey - from deriveHmacKey(salt)
  * @param {boolean} keepPrivate - if true, output stays in RFC1918 space
- * @returns {string} anonymized IP
+ * @param {Map<string, number>} bitCache - shared across one sanitizeConfig run
+ * @param {Set<string>} usedOutputs - anonymized IPs already handed out in
+ *   this run, shared across calls, so two distinct inputs never collide on
+ *   the same output
+ * @returns {Promise<string>} anonymized IP
  */
-function anonymizeIP(ip, salt, keepPrivate) {
+async function anonymizeIP(ip, hmacKey, keepPrivate, bitCache = new Map(), usedOutputs = new Set()) {
   const octets = ip.split('.').map(Number);
   const ipInt = (octets[0] << 24 | octets[1] << 16 | octets[2] << 8 | octets[3]) >>> 0;
 
-  // Apply prefix-preserving permutation: for each bit position,
-  // decide whether to flip it based on hash of (salt + prefix up to that bit)
+  // Apply prefix-preserving permutation: for each bit position, decide
+  // whether to flip it based on the HMAC of the prefix up to that bit.
   let anonInt = 0;
   for (let bit = 31; bit >= 0; bit--) {
     const shift = bit + 1;
     // JS bitwise shifts use modulo 32, so >>> 32 is a no-op; handle explicitly
     const prefix = shift >= 32 ? 0 : ((ipInt >>> shift) << shift) >>> 0;
-    const hashInput = salt + ':' + prefix.toString(16) + ':' + bit;
-    const flipBit = fnv1a(hashInput) & 1;
+    const hashInput = prefix.toString(16) + ':' + bit;
+    const flipBit = await hmacBit(hmacKey, hashInput, bitCache);
     const origBit = (ipInt >>> bit) & 1;
     anonInt |= ((origBit ^ flipBit) << bit);
   }
   anonInt = anonInt >>> 0;
 
+  const toIpString = (int) => [
+    (int >>> 24) & 0xFF, (int >>> 16) & 0xFF, (int >>> 8) & 0xFF, int & 0xFF,
+  ].join('.');
+
   if (keepPrivate) {
-    // Force into 10.0.0.0/8 space, preserve lower 24 bits of anonymized value
+    // Force into 10.0.0.0/8 space, preserve the /24 block of the anonymized
+    // value; probe the other last-octets in that block if the hash-derived
+    // one is already taken (avoids 254 distinct inputs colliding down to
+    // fewer than 254 distinct outputs).
     const lower24 = anonInt & 0x00FFFFFF;
-    // Avoid .0 and .255 in last octet for usability
+    const block = lower24 & 0xFFFF00;
     let lastOctet = lower24 & 0xFF;
     if (lastOctet === 0) lastOctet = 1;
     if (lastOctet === 255) lastOctet = 254;
-    anonInt = (10 << 24 | (lower24 & 0xFFFF00) | lastOctet) >>> 0;
-  } else {
-    // Force into 192.0.2.0/24 (TEST-NET-1) or 198.51.100.0/24 or 203.0.113.0/24
-    const pools = [[192,0,2], [198,51,100], [203,0,113]];
-    const poolIdx = (anonInt >>> 8) % 3;
-    const pool = pools[poolIdx];
-    let lastOctet = (anonInt & 0xFF);
-    if (lastOctet === 0) lastOctet = 1;
-    if (lastOctet === 255) lastOctet = 254;
-    anonInt = (pool[0] << 24 | pool[1] << 16 | pool[2] << 8 | lastOctet) >>> 0;
+    for (let tries = 0; tries < 254; tries++) {
+      const candidateOctet = ((lastOctet - 1 + tries) % 254) + 1;
+      const candidate = toIpString((10 << 24 | block | candidateOctet) >>> 0);
+      if (!usedOutputs.has(candidate)) {
+        usedOutputs.add(candidate);
+        return candidate;
+      }
+    }
+    // The whole /24 is taken (a very large batch); fall back to the
+    // collision-prone candidate rather than looping forever.
+    const fallback = toIpString((10 << 24 | block | lastOctet) >>> 0);
+    usedOutputs.add(fallback);
+    return fallback;
   }
 
-  return [
-    (anonInt >>> 24) & 0xFF,
-    (anonInt >>> 16) & 0xFF,
-    (anonInt >>> 8) & 0xFF,
-    anonInt & 0xFF,
-  ].join('.');
+  // Force into 192.0.2.0/24 (TEST-NET-1), 198.51.100.0/24 (TEST-NET-2) or
+  // 203.0.113.0/24 (TEST-NET-3); probe the remaining 761 slots across all
+  // three pools if the hash-derived one collides with an earlier output.
+  const pools = [[192, 0, 2], [198, 51, 100], [203, 0, 113]];
+  const poolIdx = (anonInt >>> 8) % 3;
+  let lastOctet = anonInt & 0xFF;
+  if (lastOctet === 0) lastOctet = 1;
+  if (lastOctet === 255) lastOctet = 254;
+  const totalSlots = pools.length * 254;
+  for (let tries = 0; tries < totalSlots; tries++) {
+    const slot = (poolIdx * 254 + (lastOctet - 1) + tries) % totalSlots;
+    const pool = pools[Math.floor(slot / 254)];
+    const octet = (slot % 254) + 1;
+    const candidate = `${pool[0]}.${pool[1]}.${pool[2]}.${octet}`;
+    if (!usedOutputs.has(candidate)) {
+      usedOutputs.add(candidate);
+      return candidate;
+    }
+  }
+  // All 762 slots across the three TEST-NET pools are taken; fall back to
+  // the collision-prone candidate rather than looping forever.
+  const pool = pools[poolIdx];
+  const fallback = `${pool[0]}.${pool[1]}.${pool[2]}.${lastOctet}`;
+  usedOutputs.add(fallback);
+  return fallback;
 }
 
 /**
@@ -1693,9 +1818,9 @@ function redactFortiEditBlocks(text, isTargetPath, classify) {
  * @param {object} [options] - Toggle individual sanitization categories
  * @param {string} [salt] - Optional salt for deterministic anonymization
  * @param {string[]} [customWords] - Optional list of custom words to redact
- * @returns {{ sanitizedText: string, replacements: Array, stats: object, vendor: string, vendorConfidence: string, residualLeaks: Array }}
+ * @returns {Promise<{ sanitizedText: string, replacements: Array, warnings: Array, stats: object, vendor: string, vendorConfidence: string, residualLeaks: Array, effectiveSalt: string }>}
  */
-function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
+async function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   if (!configText || typeof configText !== 'string') {
     throw new Error('configText is required and must be a string');
   }
@@ -1710,8 +1835,16 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     ...options,
   };
 
-  // Use provided salt or generate a random one for this session
-  const effectiveSalt = salt || Math.random().toString(36).substring(2);
+  // Use the provided salt, or draw one from the CSPRNG. Math.random() is not
+  // a CSPRNG (it's fine for jitter/UI, not for anything whose output could
+  // end up in a downloaded mapping file).
+  const effectiveSalt = salt || randomSalt();
+  const hmacKey = await deriveHmacKey(effectiveSalt);
+  // Shared across every anonymizeIP() call in this run: bitCache avoids
+  // re-deriving the same (prefix, bit) HMAC when addresses share a subnet;
+  // usedIpOutputs guarantees distinct inputs never collide on one output.
+  const ipBitCache = new Map();
+  const usedIpOutputs = new Set();
 
   const replacements = [];
   const counter = {
@@ -1744,6 +1877,8 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   const hostnameMap = new Map();
   const emailMap = new Map();
   const customWordMap = new Map();
+  const macMap = new Map();
+  const serialMap = new Map();
 
   // Values learned from a structural context (a hostname declared with
   // `set system host-name X`, a username from `username X password ...`,
@@ -1777,6 +1912,10 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
     const placeholder = `example-${counter.domain++}.net`;
     domainMap.set(value, placeholder);
     learn(type, placeholder, value);
+    // counter.url is purely a stats-bar tally here (the "URLs" stat card) --
+    // placeholder numbering/dedup always runs off the shared counter.domain
+    // above so a domain and a URL host can never collide on the same text.
+    if (type === 'url') counter.url++;
     return placeholder;
   }
 
@@ -1880,9 +2019,12 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   );
 
   // Cisco IOS/ASA "crypto ca certificate chain" hex body: a run of indented
-  // lines between "certificate ... <serial>" and a bare "quit".
+  // lines between a "certificate [ca] <label>" header and a bare "quit".
+  // Anchored to line start ("^...$" via the 'm' flag) with a non-greedy body
+  // and an optional "ca" keyword, so it matches both "certificate ca 01" and
+  // a bare "certificate 01" header instead of only the two-token form.
   sanitized = sanitized.replace(
-    /(certificate\s+\S+\s+\S+\n)((?:[ \t]+\S.*\n)+)([ \t]*quit\s*)/gi,
+    /(^[ \t]*certificate\s+(?:ca\s+)?\S+[ \t]*\n)((?:^[ \t]+\S.*\n)+?)(^[ \t]*quit\b)/gim,
     (match, header, _body, quit) => {
       const placeholder = `REDACTED_CERT_${counter.cert++}`;
       addReplacement('certificate', placeholder, '[CERT CHAIN HEX]');
@@ -2645,6 +2787,32 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   } // end opts.usernames
 
   // -----------------------------------------------------------------------
+  // 4b. SERIAL NUMBERS
+  // -----------------------------------------------------------------------
+  // (Certificates and MAC addresses are NOT handled here: section 1 above
+  // already runs a generic PEM/XML-tag/Cisco-cert-chain pass, and section 13
+  // below already runs a MAC/EUI-64 pass -- both incorporate the H3c fixes
+  // that used to live in a second, duplicate pass at this point, which risked
+  // re-redacting a placeholder the first pass had already produced.)
+  if (opts.serialNumbers) {
+
+  sanitized = sanitized.replace(
+    /((?:chassis\s+|system\s+)?serial(?:-|\s)?number\s*[:=]?\s*)(["']?)([A-Za-z0-9][A-Za-z0-9-]{4,})\2/gi,
+    (match, prefix, quote, value) => {
+      if (value.startsWith('REDACTED_')) return match;
+      let placeholder = serialMap.get(value);
+      if (!placeholder) {
+        placeholder = `REDACTED_SERIAL_${counter.serial++}`;
+        serialMap.set(value, placeholder);
+        addReplacement('serial_number', placeholder, value);
+      }
+      return `${prefix}${quote}${placeholder}${quote}`;
+    }
+  );
+
+  } // end opts.serialNumbers
+
+  // -----------------------------------------------------------------------
   // 5. SYSTEM HOSTNAME
   // -----------------------------------------------------------------------
   if (opts.sysHostname) {
@@ -3061,6 +3229,33 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // -----------------------------------------------------------------------
   if (opts.domains) {
 
+  // ASA/IOS: bare "fqdn <domain>" inside a trustpoint stanza (distinct from
+  // the "fqdn v4/v6 <domain>" ACL form already handled below)
+  if (isAsa || runAll) {
+  sanitized = sanitized.replace(
+    /^(\s*fqdn\s+)(?!v[46]\b)([a-zA-Z0-9][\w.-]+\.[a-zA-Z]{2,})/gim,
+    (match, prefix, value) => `${prefix}${resolveDomainPlaceholder(value)}`
+  );
+
+  // ASA/IOS: trustpoint "subject-name CN=<domain>,O=..." -- only the CN
+  // component is domain-shaped; leave the rest of the DN untouched.
+  sanitized = sanitized.replace(
+    /(subject-name\s+(?:[^,\n]*,\s*)?CN=)([a-zA-Z0-9][\w.-]*\.[a-zA-Z]{2,})/gi,
+    (match, prefix, value) => `${prefix}${resolveDomainPlaceholder(value)}`
+  );
+  }
+
+  // PAN-OS: <common-name>domain-or-cn</common-name> inside a certificate entry
+  if (isPanos || runAll) {
+  sanitized = sanitized.replace(
+    /(<common-name>)([^<]+)(<\/common-name>)/gi,
+    (match, open, value, close) => {
+      const trimmed = value.trim();
+      return `${open}${resolveDomainPlaceholder(trimmed)}${close}`;
+    }
+  );
+  }
+
   // FortiGate: set fqdn "domain.com" / set domain "domain.lan"
   sanitized = sanitized.replace(
     /(set\s+fqdn\s+)"([^"]+)"/gi,
@@ -3330,21 +3525,39 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // -----------------------------------------------------------------------
   if (opts.macAddresses) {
 
-  // Colon/hyphen hex form: 00:00:5e:00:53:24
+  // Colon/hyphen hex form: 00:00:5e:00:53:24 (MAC-48, 6 groups) or an
+  // EUI-64 (8 groups). Dedups through macMap so the same address always
+  // maps to the same placeholder, and the placeholder itself is built from
+  // the matched separator/group-count so it still looks like a plausible
+  // hardware address of the same shape instead of an opaque REDACTED_ token.
   sanitized = sanitized.replace(
-    /\b([0-9a-fA-F]{2}([:-])[0-9a-fA-F]{2}(?:\2[0-9a-fA-F]{2}){4,6})\b/g,
-    (match) => {
-      const placeholder = `REDACTED_MAC_${counter.mac++}`;
-      addReplacement('mac', placeholder, match);
+    /(?<![\w.:-])([0-9a-fA-F]{2}([:-])[0-9a-fA-F]{2}(?:\2[0-9a-fA-F]{2}){4,6})(?![\w.:-])/g,
+    (match, addr, sep) => {
+      const key = addr.toLowerCase().replace(/-/g, ':');
+      let placeholder = macMap.get(key);
+      if (!placeholder) {
+        const groupCount = addr.split(sep).length;
+        const idx = (counter.mac++).toString(16).padStart(2, '0');
+        const groups = ['00', '00', '5e', '00', '53', idx];
+        while (groups.length < groupCount) groups.push(idx);
+        placeholder = groups.slice(0, groupCount).join(sep);
+        macMap.set(key, placeholder);
+        addReplacement('mac_address', placeholder, addr);
+      }
       return placeholder;
     }
   );
   // Cisco dotted-quad-hex form: 0000.5e00.5384
   sanitized = sanitized.replace(
-    /\b([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\b/g,
+    /(?<![\w.:-])([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})(?![\w.:-])/g,
     (match) => {
-      const placeholder = `REDACTED_MAC_${counter.mac++}`;
-      addReplacement('mac', placeholder, match);
+      const key = match.toLowerCase();
+      let placeholder = macMap.get(key);
+      if (!placeholder) {
+        placeholder = `00:00:5e:00:53:${(counter.mac++).toString(16).padStart(2, '0')}`;
+        macMap.set(key, placeholder);
+        addReplacement('mac_address', placeholder, match);
+      }
       return placeholder;
     }
   );
@@ -3356,35 +3569,60 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // -----------------------------------------------------------------------
   if (opts.publicIps || opts.privateIps) {
 
-  // Match IPv4 with optional CIDR prefix length
-  const ipRegex = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(\/\d{1,2})?\b/g;
+  // Match IPv4 with optional CIDR prefix length. Use a digit/dot-only
+  // boundary rather than \b: object names like "H_192.0.2.10" glue an IP
+  // directly onto a preceding underscore, and \w treats "_" as a word
+  // character, so \b never fires between "_" and the leading digit and the
+  // IP silently survives sanitization.
+  const ipRegex = /(?<![\d.])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(\/\d{1,2})?(?![\d.])/g;
 
-  sanitized = sanitized.replace(ipRegex, (match, ip, cidr) => {
-    if (!isValidIPv4(ip)) return match;
-    if (isSubnetMask(ip)) return match;
-    if (isDocumentationIPv4(ip)) return match;
+  // anonymizeIP is async (it goes through WebCrypto HMAC-SHA-256), so this
+  // can't be a plain String#replace with a synchronous callback. Rebuild the
+  // string by hand from matchAll(), awaiting each replacement in order.
+  let rebuilt = '';
+  let lastIndex = 0;
+  for (const m of sanitized.matchAll(ipRegex)) {
+    const [match, ip, cidr] = m;
+    rebuilt += sanitized.slice(lastIndex, m.index);
+    lastIndex = m.index + match.length;
+
+    // isDocumentationIPv4 skips RFC 5737/2544 addresses: anonymizeIP's own
+    // "public" branch synthesizes output into that same range, so leaving
+    // one of these un-anonymized avoids the (rare but possible) risk of the
+    // anonymized output containing the original as a literal substring.
+    if (!isValidIPv4(ip) || isSubnetMask(ip) || isDocumentationIPv4(ip)) { rebuilt += match; continue; }
     const suffix = cidr || '';
 
-    if (isPrivateOrReserved(ip)) {
-      if (!opts.privateIps) return match;
-      // Prefix-preserving: dedup on IP, preserve CIDR
-      if (privateIpMap.has(ip)) return privateIpMap.get(ip) + suffix;
-      counter.privateIp++;
-      const placeholder = anonymizeIP(ip, effectiveSalt, true);
-      privateIpMap.set(ip, placeholder);
-      addReplacement('private_ip', placeholder, ip);
-      return placeholder + suffix;
+    if (isPassthroughIPv4(ip)) {
+      // Loopback, link-local and multicast addresses aren't identifying;
+      // leave them as-is instead of spending a placeholder/mapping entry on
+      // them (127.0.0.1 in particular is present in nearly every config and
+      // was previously a known-plaintext lever for brute-forcing the salt).
+      rebuilt += match;
+      continue;
     }
 
-    if (!opts.publicIps) return match;
-    // Prefix-preserving: dedup on IP, preserve CIDR
-    if (publicIpMap.has(ip)) return publicIpMap.get(ip) + suffix;
+    if (isPrivateOrReserved(ip)) {
+      if (!opts.privateIps) { rebuilt += match; continue; }
+      if (privateIpMap.has(ip)) { rebuilt += privateIpMap.get(ip) + suffix; continue; }
+      counter.privateIp++;
+      const placeholder = await anonymizeIP(ip, hmacKey, true, ipBitCache, usedIpOutputs);
+      privateIpMap.set(ip, placeholder);
+      addReplacement('private_ip', placeholder, ip);
+      rebuilt += placeholder + suffix;
+      continue;
+    }
+
+    if (!opts.publicIps) { rebuilt += match; continue; }
+    if (publicIpMap.has(ip)) { rebuilt += publicIpMap.get(ip) + suffix; continue; }
     counter.publicIp++;
-    const placeholder = anonymizeIP(ip, effectiveSalt, false);
+    const placeholder = await anonymizeIP(ip, hmacKey, false, ipBitCache, usedIpOutputs);
     publicIpMap.set(ip, placeholder);
     addReplacement('public_ip', placeholder, ip);
-    return placeholder + suffix;
-  });
+    rebuilt += placeholder + suffix;
+  }
+  rebuilt += sanitized.slice(lastIndex);
+  sanitized = rebuilt;
 
   } // end opts.publicIps || opts.privateIps
 
@@ -3393,17 +3631,23 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // -----------------------------------------------------------------------
   if (opts.ipv6) {
 
-  // Match IPv6 addresses: full, compressed, and with prefix length. The
-  // lookahead includes "<" so an address immediately closed by an XML tag
-  // (e.g. Junos/PAN-OS "<ip>fd12:3456:789a:4::5</ip>") still matches --
-  // previously only whitespace/`;`/`,`/`>`/quotes/`]` were accepted, so
-  // XML-wrapped IPv6 addresses fell straight through unredacted.
-  const ipv6Regex = /(?<![:\w])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|:(?::[0-9a-fA-F]{1,4}){1,7}|::)(?:%[a-zA-Z0-9]+)?(?=\/\d{1,3}\b|\s|$|[;,><"'\]])/gm;
+  // Match IPv6 addresses: full, compressed, and with prefix length
+  // Covers: 2001:0db8:85a3::8a2e:370:7334, fe80::1%eth0, ::1, etc.
+  // Trailing lookahead must include '<' and ')' too: addresses embedded in
+  // XML text nodes ("<ip>2001:db8::1</ip>", e.g. Junos/PAN-OS
+  // "<ip>fd12:3456:789a:4::5</ip>") or parenthesized ACL remarks
+  // ("(2001:db8::1)") are immediately followed by one of those characters,
+  // and without them in the set the lookahead fails so the whole match
+  // (including the valid part before it) is rejected by the regex engine.
+  const ipv6Regex = /(?<![:\w])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|:(?::[0-9a-fA-F]{1,4}){1,7}|::)(?:%[a-zA-Z0-9]+)?(?=\/\d{1,3}\b|\s|$|[;,>"'\]<)])/gm;
 
   sanitized = sanitized.replace(ipv6Regex, (match) => {
     const addr = match.replace(/%[a-zA-Z0-9]+$/, ''); // strip zone ID for comparison
     // Skip loopback ::1 and unspecified ::
     if (addr === '::1' || addr === '::') return match;
+    // Skip link-local (fe80::/10) and multicast (ff00::/8): not identifying
+    if (/^fe[89ab][0-9a-f]:/i.test(addr)) return match;
+    if (/^ff[0-9a-f]{2}:/i.test(addr)) return match;
     // Skip documentation addresses (already sanitized)
     if (isDocIPv6(addr)) return match;
 
@@ -3487,6 +3731,12 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
       // must never short-circuit query-string redaction.
       const alreadySanitized =
         /^example(?:-\d+)?\.net$/.test(domain) || /^host-\d+\.example\.net$/.test(domain);
+      // Routed through the same resolveDomainPlaceholder counter/map the
+      // generic domain pass uses (with type 'url' only for the mapping-file
+      // label), not a second independent counter -- resolveDomainPlaceholder
+      // already dedups by the actual host string, so an unrelated domain and
+      // URL host can't collide on the same placeholder text the way two
+      // independently-seeded "example-0.net" counters could.
       const placeholder = alreadySanitized ? domain : resolveDomainPlaceholder(domain, 'url');
       const userinfoPart = userinfo ? `${userinfo}@` : '';
       return `${scheme}${userinfoPart}${placeholder}${redactQueryValues(pathPart || '')}`;
@@ -3640,12 +3890,24 @@ function sanitizeConfig(configText, options = {}, salt = '', customWords = []) {
   // Build stats
   // -----------------------------------------------------------------------
 
+  // Run the post-sanitization validator unconditionally so every caller
+  // (single-file and batch) gets the same warnings, instead of relying on
+  // the UI to call validateSanitized separately -- batch mode used to skip
+  // it entirely.
+  const warnings = validateSanitized(sanitized, opts);
+
   return {
     sanitizedText: sanitized,
     replacements,
+    warnings,
     vendor,
     vendorConfidence,
     residualLeaks,
+    // The caller may have left `salt` blank and gotten a CSPRNG-generated
+    // one (randomSalt() above); expose the salt actually used so callers can
+    // record it in a mapping file instead of silently losing the only way
+    // to reproduce that mapping.
+    effectiveSalt,
     stats: {
       hashes: counter.hash,
       keys: counter.key,
@@ -3705,7 +3967,7 @@ function validateSanitized(sanitizedText, opts) {
 
     // Check for remaining non-documentation public IPs
     if (opts.publicIps) {
-      const ipMatches = line.matchAll(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g);
+      const ipMatches = line.matchAll(/(?<![\d.])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![\d.])/g);
       for (const m of ipMatches) {
         const ip = m[1];
         if (!isValidIPv4(ip) || isSubnetMask(ip)) continue;
@@ -3736,11 +3998,15 @@ function validateSanitized(sanitizedText, opts) {
         const fqdn = m[1];
         if (/^example(?:-\d+)?\.net$/.test(fqdn)) continue;
         if (/^host-\d+\.example\.net$/.test(fqdn)) continue;
+        if (/^url-example-\d+\.net$/.test(fqdn)) continue;
         // Skip common generic/protocol names
         if (/^(www|ftp|http|https|tcp|udp)\./i.test(fqdn)) continue;
-        // Only flag if it looks like a real domain (has at least 2 parts and a real TLD)
+        // Only flag if it looks like a real domain (has at least 2 parts and a
+        // real TLD). RFC 1035 caps a DNS label at 63 octets; the old 6-char
+        // cap silently ignored longer-but-legitimate TLDs (e.g. reserved
+        // 7-char ".example").
         const parts = fqdn.split('.');
-        if (parts.length >= 2 && parts[parts.length - 1].length >= 2 && parts[parts.length - 1].length <= 6) {
+        if (parts.length >= 2 && parts[parts.length - 1].length >= 2 && parts[parts.length - 1].length <= 63) {
           // Skip things that are clearly not domains (version numbers like 9.16, etc.)
           if (/^\d+\.\d+$/.test(fqdn)) continue;
           if (/^REDACTED_|^SANITIZED_|^sanitized-/.test(fqdn)) continue;
@@ -3751,8 +4017,30 @@ function validateSanitized(sanitizedText, opts) {
 
     // Check for patterns that look like passwords/secrets that were missed
     if (opts.credentials) {
-      if (/\$\d\$[^\s"]+/.test(line) && !line.includes('REDACTED_')) {
-        warnings.push({ severity: 'high', message: 'Possible unsanitized password hash', line: lineNum, snippet: line.trim().substring(0, 120) });
+      if (!line.includes('REDACTED_')) {
+        if (/\$\d\$[^\s"]+/.test(line)) {
+          warnings.push({ severity: 'high', message: 'Possible unsanitized password hash', line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+        // crypt-style hash with a named (non-numeric) algorithm id, e.g. $sha512$salt$hash
+        if (/\$[a-zA-Z][a-zA-Z0-9_-]*\$[^\s"]+\$/.test(line)) {
+          warnings.push({ severity: 'high', message: 'Possible unsanitized named password hash', line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+        // FortiOS ENC-obscured secret
+        if (/\bENC\s+[A-Za-z0-9+/=]{8,}/.test(line)) {
+          warnings.push({ severity: 'high', message: 'Possible unsanitized FortiOS ENC secret', line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+        // Base64 blobs ending "-AQ==" (Juniper/PAN-OS encrypted secret trailer)
+        if (/[A-Za-z0-9+/]{8,}-AQ==/.test(line)) {
+          warnings.push({ severity: 'high', message: 'Possible unsanitized encrypted secret (-AQ== trailer)', line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+        // Cisco IOS type 7 password
+        if (/\b(?:password|key(?:-string)?)\s+7\s+[0-9A-Fa-f]{4,}\b/.test(line)) {
+          warnings.push({ severity: 'high', message: 'Possible unsanitized Cisco type 7 password', line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
+        // Literal pbkdf2 marker left in an unredacted secret
+        if (/\bpbkdf2\b/i.test(line)) {
+          warnings.push({ severity: 'high', message: 'Possible unsanitized pbkdf2-derived secret', line: lineNum, snippet: line.trim().substring(0, 120) });
+        }
       }
     }
 
@@ -3763,13 +4051,14 @@ function validateSanitized(sanitizedText, opts) {
         const domain = m[1];
         if (/^example(?:-\d+)?\.net$/.test(domain)) continue;
         if (/^host-\d+\.example\.net$/.test(domain)) continue;
+        if (/^url-example-\d+\.net$/.test(domain)) continue;
         warnings.push({ severity: 'medium', message: `Possible unsanitized URL domain: ${domain}`, line: lineNum, snippet: line.trim().substring(0, 120) });
       }
     }
 
     // Check for remaining private IPs not in our 10.x.x.x output space
     if (opts.privateIps) {
-      const privMatches = line.matchAll(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g);
+      const privMatches = line.matchAll(/(?<![\d.])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![\d.])/g);
       for (const m of privMatches) {
         const ip = m[1];
         if (!isValidIPv4(ip) || isSubnetMask(ip)) continue;
@@ -3871,8 +4160,27 @@ $('#clearBtn').addEventListener('click', () => {
   currentResult = null;
 });
 
+// Warnings/download-gate helpers shared by single-file and batch mode
+function hasHighSeverity(warnings) {
+  return Array.isArray(warnings) && warnings.some(w => w.severity === 'high');
+}
+
+function setupWarningsAck(rowSel, checkSel, warnings) {
+  $(checkSel).checked = false;
+  $(rowSel).classList.toggle('hidden', !hasHighSeverity(warnings));
+}
+
+function blockedByWarnings(checkSel, warnings) {
+  if (!hasHighSeverity(warnings)) return false;
+  if (!$(checkSel).checked) {
+    alert('High-severity warnings have not been acknowledged yet. Review the warnings above and check the acknowledgement box before downloading.');
+    return true;
+  }
+  return false;
+}
+
 // Sanitize
-$('#sanitizeBtn').addEventListener('click', () => {
+$('#sanitizeBtn').addEventListener('click', async () => {
   const input = $('#configInput').value;
   if (!input.trim()) return;
 
@@ -3887,11 +4195,14 @@ $('#sanitizeBtn').addEventListener('click', () => {
   const customWordsRaw = $('#customWordsInput').value.trim();
   const customWords = customWordsRaw ? customWordsRaw.split(',').map(w => w.trim()).filter(Boolean) : [];
 
+  $('#sanitizeBtn').disabled = true;
   try {
-    currentResult = sanitizeConfig(input, options, salt, customWords);
+    currentResult = await sanitizeConfig(input, options, salt, customWords);
   } catch (err) {
     alert('Error sanitizing config: ' + err.message);
     return;
+  } finally {
+    $('#sanitizeBtn').disabled = false;
   }
 
   // Show results
@@ -3909,12 +4220,16 @@ $('#sanitizeBtn').addEventListener('click', () => {
   renderMappingTable(currentResult.replacements);
   $('#mappingCount').textContent = `${currentResult.replacements.length} replacements`;
 
-  // Validation pass. Residual-original leaks and low vendor-detection
-  // confidence are folded into the same warnings panel as high/medium
-  // severity items so they can never ship silently -- the whole point of
-  // the residual-original check is that a leak surfaces to the user
-  // instead of being swallowed by a successful-looking download.
-  const warnings = validateSanitized(currentResult.sanitizedText, options);
+  // Validation pass. sanitizeConfig already ran the validator (see the
+  // unconditional validateSanitized call inside it), so reuse
+  // currentResult.warnings instead of recomputing it here. Residual-original
+  // leaks and low vendor-detection confidence are folded into that same
+  // warnings list -- in place, so currentResult.warnings stays the single
+  // source of truth the download-ack gate below also reads -- so they can
+  // never ship silently: the whole point of the residual-original check is
+  // that a leak surfaces to the user instead of being swallowed by a
+  // successful-looking download.
+  const warnings = currentResult.warnings;
   for (const leak of currentResult.residualLeaks) {
     warnings.unshift({
       severity: 'high',
@@ -3932,6 +4247,7 @@ $('#sanitizeBtn').addEventListener('click', () => {
     });
   }
   renderWarnings(warnings, currentResult.residualLeaks.length);
+  setupWarningsAck('#warningsAckRow', '#warningsAckCheck', warnings);
 });
 
 // Copy
@@ -3959,26 +4275,32 @@ $('#copyCsvBtn').addEventListener('click', () => {
   });
 });
 
-// Download sanitized config
+// Download sanitized config. The output filename intentionally does not
+// derive from the original filename -- the original name itself is often
+// identifying (hostname, site code, customer name).
 $('#dlSanitized').addEventListener('click', () => {
   if (!currentResult) return;
-  const ext = loadedFilename.split('.').pop();
-  const baseName = loadedFilename.replace(/\.[^.]+$/, '');
-  download(`${baseName}.sanitized.${ext}`, currentResult.sanitizedText);
+  if (blockedByWarnings('#warningsAckCheck', currentResult.warnings)) return;
+  const ext = (loadedFilename.split('.').pop() || 'txt').replace(/[^a-zA-Z0-9]/g, '') || 'txt';
+  download(`config-1.sanitized.${ext}`, currentResult.sanitizedText);
 });
 
 // Download mapping
 $('#dlMapping').addEventListener('click', () => {
   if (!currentResult) return;
+  if (blockedByWarnings('#warningsAckCheck', currentResult.warnings)) return;
+  if (!confirm('The mapping file contains the ORIGINAL sensitive values. Do not share it -- keep it local, only for restoring the sanitized config later.')) return;
   const baseName = loadedFilename.replace(/\.[^.]+$/, '');
-  const saltVal = $('#saltInput').value.trim();
   const mappingData = {
     metadata: {
       timestamp: new Date().toISOString(),
       originalFilename: loadedFilename,
       vendor: currentResult.vendor,
       stats: currentResult.stats,
-      ...(saltVal ? { salt: saltVal } : {}),
+      // The salt actually used, whether the user typed one or it was
+      // CSPRNG-generated -- without it, a blank salt input meant the
+      // mapping could never be reproduced/restored later.
+      salt: currentResult.effectiveSalt,
     },
     mappings: currentResult.replacements,
   };
@@ -4291,7 +4613,8 @@ themeToggle.addEventListener('click', () => {
 $('#savePresetBtn').addEventListener('click', () => {
   const preset = {};
   $$('.opt-check input[data-opt]').forEach(cb => { preset[cb.dataset.opt] = cb.checked; });
-  preset._salt = $('#saltInput').value;
+  // Deliberately not persisted: the salt controls anonymization mapping
+  // determinism and must not be written to localStorage.
   preset._customWords = $('#customWordsInput').value;
   localStorage.setItem('sanitizerPreset', JSON.stringify(preset));
   const btn = $('#savePresetBtn');
@@ -4326,7 +4649,6 @@ $('#allOffBtn').addEventListener('click', () => {
     $$('.opt-check input[data-opt]').forEach(cb => {
       if (preset[cb.dataset.opt] !== undefined) cb.checked = preset[cb.dataset.opt];
     });
-    if (preset._salt) $('#saltInput').value = preset._salt;
     if (preset._customWords) $('#customWordsInput').value = preset._customWords;
   } catch (_) {}
 })();
@@ -4485,7 +4807,7 @@ function renderBatchFileList() {
     <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
       <strong style="flex:1">${escapeHtml(f.name)}</strong>
       <span style="color:var(--text-dim)">${formatSize(f.size)}</span>
-      <button class="btn" style="font-size:11px;padding:2px 8px" onclick="removeBatchFile(${i})">Remove</button>
+      <button class="btn" style="font-size:11px;padding:2px 8px" data-remove-batch-file="${i}">Remove</button>
     </div>
   `).join('');
   $('#batchSanitizeBtn').disabled = batchFiles.length === 0;
@@ -4497,7 +4819,63 @@ function removeBatchFile(idx) {
   renderBatchFileList();
 }
 
-$('#batchSanitizeBtn').addEventListener('click', () => {
+// Delegated listener instead of inline onclick="" attributes on the
+// dynamically-rendered "Remove" buttons above, so the page's CSP script-src
+// can be a single hash/no 'unsafe-inline' without also needing
+// 'unsafe-hashes' for element event-handler attributes.
+$('#batchFileList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-remove-batch-file]');
+  if (!btn) return;
+  removeBatchFile(Number(btn.dataset.removeBatchFile));
+});
+
+let lastBatchSalt = '';
+
+// A residual leak (an original value that survived sanitization) must never
+// ship silently inside a successful-looking zip either -- fold it into the
+// same warnings shape the validator produces so it flows through the batch
+// panel's shared high-severity ack gate (see setupWarningsAck/
+// blockedByWarnings) exactly like the single-file view's residual-leak
+// warnings do (see setResidualGate's caller above).
+function residualLeakWarnings(result) {
+  return result.residualLeaks.map((leak) => ({
+    severity: 'high',
+    line: 0,
+    message: `Residual original value still present in output (${leak.type}): ${leak.original}`,
+    snippet: '(see mapping table / re-run with the affected category enabled)',
+  }));
+}
+
+function renderBatchWarnings(warnings) {
+  const panel = $('#batchWarningsPanel');
+  const list = $('#batchWarningsList');
+  const title = $('#batchWarningsTitle');
+
+  if (warnings.length === 0) {
+    panel.classList.add('hidden');
+    list.innerHTML = '';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  const highCount = warnings.filter(w => w.severity === 'high').length;
+  const medCount = warnings.filter(w => w.severity === 'medium').length;
+  const parts = [];
+  if (highCount) parts.push(`${highCount} high`);
+  if (medCount) parts.push(`${medCount} medium`);
+  title.textContent = `Review needed: ${warnings.length} potential issue${warnings.length > 1 ? 's' : ''} across batch (${parts.join(', ')})`;
+
+  list.innerHTML = warnings.map(w => `
+    <div class="warning-item">
+      <span class="w-sev ${w.severity}">${w.severity}</span>
+      <span class="w-line">${escapeHtml(w.sourceFile)}:${w.line}</span>
+      <span class="w-msg">${escapeHtml(w.message)}</span>
+      <span class="w-snippet">${escapeHtml(w.snippet)}</span>
+    </div>
+  `).join('');
+}
+
+$('#batchSanitizeBtn').addEventListener('click', async () => {
   if (batchFiles.length === 0) return;
 
   // Read options from Sanitize tab checkboxes
@@ -4506,79 +4884,72 @@ $('#batchSanitizeBtn').addEventListener('click', () => {
   const salt = $('#saltInput').value.trim();
   const customWordsRaw = $('#customWordsInput').value.trim();
   const customWords = customWordsRaw ? customWordsRaw.split(',').map(w => w.trim()).filter(Boolean) : [];
-  // Force a salt for batch mode so all files use the same mapping
-  const batchSalt = salt || 'batch-' + Date.now().toString(36);
+  // Force a salt for batch mode so all files use the same mapping. When the
+  // user didn't supply one, draw 32 bytes from the CSPRNG -- not a value an
+  // attacker could feasibly narrow down (unlike a wall-clock timestamp).
+  const batchSalt = salt || randomSalt();
+  lastBatchSalt = batchSalt;
 
+  $('#batchSanitizeBtn').disabled = true;
   batchResults = [];
   let totalReplacements = 0;
+  const allWarnings = [];
 
-  for (const file of batchFiles) {
-    const result = sanitizeConfig(file.content, options, batchSalt, customWords);
-    batchResults.push({ name: file.name, result });
-    totalReplacements += result.replacements.length;
+  try {
+    for (const file of batchFiles) {
+      const result = await sanitizeConfig(file.content, options, batchSalt, customWords);
+      batchResults.push({ name: file.name, result });
+      totalReplacements += result.replacements.length;
+      for (const w of [...residualLeakWarnings(result), ...result.warnings]) {
+        allWarnings.push({ ...w, sourceFile: file.name });
+      }
+    }
+  } catch (err) {
+    alert('Error sanitizing batch: ' + err.message);
+    return;
+  } finally {
+    $('#batchSanitizeBtn').disabled = false;
   }
 
   const autoSaltChip = !salt
     ? ` <span class="stat" style="color:var(--warning)" title="Save this salt to reproduce the same anonymization mapping later."><span class="dot" style="background:var(--warning)"></span> Auto-salt used <span class="count">${escapeHtml(batchSalt)}</span></span>`
     : '';
   $('#batchStatsBar').innerHTML = `<div class="stat"><span class="dot" style="background:var(--accent)"></span> ${batchFiles.length} files <span class="count">${totalReplacements} total replacements</span></div>${autoSaltChip}`;
-
-  // A residual leak in even one file must not ship silently inside a
-  // successful-looking zip -- name the affected files and require an
-  // explicit acknowledgement before the zip can be downloaded, the same
-  // gate the single-file view applies (see setResidualGate).
-  const leaky = batchResults.filter(({ result }) => result.residualLeaks.length > 0);
-  const warningBox = $('#batchResidualWarning');
-  const downloadBtn = $('#batchDownloadBtn');
-  if (leaky.length > 0) {
-    warningBox.classList.remove('hidden');
-    warningBox.innerHTML = `
-      <div class="warning-item">
-        <span class="w-sev high">high</span>
-        <span class="w-msg">Residual original value(s) still present in: ${escapeHtml(leaky.map(f => f.name).join(', '))}</span>
-      </div>
-      <div class="warning-item warning-ack">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" id="batchResidualAckCheck">
-          I understand ${leaky.length} file${leaky.length > 1 ? 's have' : ' has'} a residual original value
-          still present, and want to download the zip anyway.
-        </label>
-      </div>
-    `;
-    downloadBtn.disabled = true;
-    $('#batchResidualAckCheck').addEventListener('change', (e) => { downloadBtn.disabled = !e.target.checked; });
-  } else {
-    warningBox.classList.add('hidden');
-    warningBox.innerHTML = '';
-    downloadBtn.disabled = false;
-  }
-
+  renderBatchWarnings(allWarnings);
+  setupWarningsAck('#batchWarningsAckRow', '#batchWarningsAckCheck', allWarnings);
   $('#batchResults').classList.remove('hidden');
 });
 
 $('#batchDownloadBtn').addEventListener('click', () => {
   if (batchResults.length === 0) return;
+  const allWarnings = batchResults.flatMap(({ name, result }) =>
+    [...residualLeakWarnings(result), ...result.warnings].map(w => ({ ...w, sourceFile: name }))
+  );
+  if (blockedByWarnings('#batchWarningsAckCheck', allWarnings)) return;
 
   const zipFiles = [];
   const allMappings = [];
 
-  for (const { name, result } of batchResults) {
-    const baseName = name.replace(/\.[^.]+$/, '');
-    const ext = name.split('.').pop();
-    zipFiles.push({ name: `${baseName}.sanitized.${ext}`, content: result.sanitizedText });
+  // Output filenames deliberately drop the original filename -- it's often
+  // identifying (hostname, site code, customer name).
+  batchResults.forEach(({ name, result }, i) => {
+    const ext = (name.split('.').pop() || 'txt').replace(/[^a-zA-Z0-9]/g, '') || 'txt';
+    zipFiles.push({ name: `config-${i + 1}.sanitized.${ext}`, content: result.sanitizedText });
     allMappings.push(...result.replacements.map(r => ({ ...r, sourceFile: name })));
-  }
+  });
 
   const mappingData = {
     metadata: {
       timestamp: new Date().toISOString(),
       fileCount: batchResults.length,
       files: batchResults.map(r => r.name),
-      salt: $('#saltInput').value.trim() || '(auto-generated for batch)',
+      salt: lastBatchSalt,
     },
     mappings: allMappings,
   };
   zipFiles.push({ name: 'combined.mapping.json', content: JSON.stringify(mappingData, null, 2) });
+
+  if (!confirm('The zip includes combined.mapping.json, which contains the ORIGINAL sensitive values. Do not share it -- keep it local, only for restoring the sanitized configs later.')) return;
 
   const zipData = createZip(zipFiles);
   const blob = new Blob([zipData], { type: 'application/zip' });

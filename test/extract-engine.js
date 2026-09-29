@@ -72,12 +72,15 @@ function loadEngineSource() {
 function loadEngine() {
   const { source, startLineNo, endLineNo } = loadEngineSource();
 
-  const sandbox = {};
+  // The engine now uses WebCrypto (crypto.getRandomValues / crypto.subtle)
+  // for salting and TextEncoder for HMAC input; neither is a vm-context
+  // global, so both must be copied in from the host Node process explicitly.
+  const sandbox = { crypto: globalThis.crypto, TextEncoder: globalThis.TextEncoder };
   vm.createContext(sandbox);
   const script = new vm.Script(source, { filename: 'index.html (extracted engine)' });
   script.runInContext(sandbox);
 
-  const required = ['sanitizeConfig', 'validateSanitized', 'detectVendor', 'anonymizeIP', 'fnv1a'];
+  const required = ['sanitizeConfig', 'validateSanitized', 'detectVendor', 'anonymizeIP', 'deriveHmacKey', 'randomSalt', 'isPassthroughIPv4'];
   for (const name of required) {
     if (typeof sandbox[name] !== 'function') {
       throw new Error(`Expected engine to export function "${name}", got ${typeof sandbox[name]}`);

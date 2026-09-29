@@ -29,7 +29,7 @@ A portable, browser-based tool that sanitizes firewall configurations by replaci
 7. Click **Sanitize**
 8. Review the **validation warnings** for any potentially missed items
 9. Use the **Diff** view to compare original vs sanitized side-by-side
-10. Download the **sanitized config** (safe to share) and the **mapping file** (to restore later)
+10. Download the **sanitized config** (review before sharing) and the **mapping file** (to restore later)
 
 For multiple files, use the **Batch** tab to sanitize several configs at once and download a zip.
 

@@ -21,8 +21,39 @@ const { loadEngine, INDEX_HTML_PATH } = require('./extract-engine');
 const { cases } = require('./cases');
 const { makeCrossCuttingCases, DEFAULT_SALT } = require('./cross-cutting');
 
-function runStandardCase(engine, testCase) {
-  const result = engine.sanitizeConfig(testCase.input, {}, DEFAULT_SALT, []);
+// The page's CSP pins script-src to a hash of the single inline <script>
+// block (see index.html's <head> comment). If that block's text changes
+// without the hash being recomputed, the browser will silently refuse to run
+// the app at all under its own CSP - fail loudly here instead.
+function checkCspScriptHash() {
+  const html = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
+  const tag = '<' + 'script>';
+  const start = html.lastIndexOf(tag) + tag.length;
+  const end = html.lastIndexOf('</' + 'script>');
+  if (start <= tag.length - 1 || end === -1 || end <= start) {
+    throw new Error('Could not locate the inline <script> block to verify its CSP hash.');
+  }
+  const scriptContent = html.slice(start, end);
+  const actualHash = 'sha256-' + require('node:crypto').createHash('sha256').update(scriptContent, 'utf8').digest('base64');
+
+  const cspMatch = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
+  if (!cspMatch) {
+    throw new Error('No Content-Security-Policy meta tag found in index.html.');
+  }
+  const hashMatch = cspMatch[1].match(/script-src '(sha256-[^']+)'/);
+  if (!hashMatch) {
+    throw new Error('CSP meta tag has no script-src sha256 hash.');
+  }
+  if (hashMatch[1] !== actualHash) {
+    throw new Error(
+      `CSP script-src hash is stale: meta tag has ${hashMatch[1]}, actual inline script hashes to ${actualHash}. ` +
+      'Recompute per the instructions in index.html\'s <head> comment.'
+    );
+  }
+}
+
+async function runStandardCase(engine, testCase) {
+  const result = await engine.sanitizeConfig(testCase.input, {}, DEFAULT_SALT, []);
   const leaked = testCase.leakTokens.filter((tok) => result.sanitizedText.includes(tok));
   // mustSurvive (optional): text that must remain verbatim in the output, so
   // a "fix" that deletes the whole line instead of surgically redacting it
@@ -71,30 +102,34 @@ function runResidualOriginalCheck(fixtureRuns) {
   };
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   const jsonOutIdx = args.indexOf('--json');
   const mdOutIdx = args.indexOf('--md');
   const jsonOut = jsonOutIdx !== -1 ? args[jsonOutIdx + 1] : null;
   const mdOut = mdOutIdx !== -1 ? args[mdOutIdx + 1] : null;
 
+  checkCspScriptHash();
+
   const { engine, startLineNo, endLineNo } = loadEngine();
-  const indexHtmlSource = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
 
-  const standardResults = cases.map((c) => runStandardCase(engine, c));
+  const standardResults = [];
+  for (const c of cases) {
+    standardResults.push(await runStandardCase(engine, c));
+  }
 
-  const crossCutting = makeCrossCuttingCases(engine, indexHtmlSource);
+  const crossCutting = await makeCrossCuttingCases(engine);
 
   // Case 100 needs sanitizedText+replacements from every sanitizeConfig call
   // in the corpus. Cases 1-94 already have that; cases 96/97 also call
   // sanitizeConfig internally, so we recompute those two lightly here rather
   // than threading state out of cross-cutting.js.
   const sanitizeConfigFixtureRuns = [...standardResults];
-  const extra96 = engine.sanitizeConfig(
+  const extra96 = await engine.sanitizeConfig(
     Array.from({ length: 254 }, (_, i) => `set FAKE-HOST-${i + 1} address 192.0.2.${i + 1}`).join('\n') + '\n',
     {}, DEFAULT_SALT, []
   );
-  const extra97 = engine.sanitizeConfig(
+  const extra97 = await engine.sanitizeConfig(
     'set fqdn "fakeorg97a.example.org"\nset url "https://fakeorg97b.example.com/path"\n',
     {}, DEFAULT_SALT, []
   );
@@ -168,4 +203,7 @@ function main() {
   process.exitCode = drift.length > 0 ? 1 : 0;
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});
