@@ -52,11 +52,11 @@ paths = ['''^test/cases\.js$''']
 regexTarget = "line"
 regexes = ['''FAKE119''']
 
-# The vendor rule below (added by this PR, MEC-30) is not in gitleaks'
-# default ruleset, so PR #4's test fixtures were never checked against it
-# and it fires on a synthetic value in test/cases.js. The allowlist is
-# scoped to the exact fixture text, not the whole file -- a real secret
-# added to test/cases.js in a later commit still alerts.
+# The vendor rule below is not in gitleaks' default ruleset, so PR #4's
+# test fixtures were never checked against it and it fires on a synthetic
+# value in test/cases.js. The allowlist is scoped to the exact fixture
+# text, not the whole file -- a real secret added to test/cases.js in a
+# later commit still alerts.
 [[rules]]
 id = "junos-type9-secret"
 [[rules.allowlists]]
@@ -65,3 +65,27 @@ condition = "AND"
 paths = ['''^test/cases\.js$''', '''^test/reports/''']
 regexTarget = "match"
 regexes = ['''^\$9\$FAKE[A-Za-z0-9]*$''']
+
+# MEC-141 re-review F1: mecmcp#392 dropped the custom pem-private-key rule
+# on the assumption that the default private-key rule already covers all
+# key types. That is only true for complete PEM blocks -- the default rule
+# requires a full header, a >=64-char body, and the closing footer, so it
+# misses truncated/partial PEM (exactly the shape this repo's fixture suite
+# produces, e.g. cases 115 and 119). This repo-local rule restores
+# header-only detection so partial keys still alert.
+[[rules]]
+id = "pem-private-key-header"
+description = "PEM private key header (catches truncated/partial blocks)"
+regex = '''-----BEGIN\s+((EC|RSA|DSA|OPENSSH|ENCRYPTED)\s+)?PRIVATE KEY-----|-----BEGIN PGP PRIVATE KEY BLOCK-----'''
+tags = ["pem", "secret"]
+[[rules.allowlists]]
+description = "synthetic PEM fixtures in test/cases.js (FAKEKEYDATA88 / FAKE115* / FAKE119*)"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "line"
+regexes = ['''FAKEKEYDATA88''', '''FAKE115''', '''FAKE119''']
+[[rules.allowlists]]
+description = "MEC-13 pre-relabel description line in 7458b76"
+condition = "AND"
+commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
+paths = ['''^test/cases\.js$''']
