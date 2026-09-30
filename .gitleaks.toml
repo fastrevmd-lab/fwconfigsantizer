@@ -53,9 +53,9 @@ regexes = ['''FAKE119''']
 [[rules]]
 id = "junos-type9-secret"
 [[rules.allowlists]]
-description = "synthetic $9$FAKE* fixtures in the sanitizer test suite"
+description = "synthetic $9$FAKE* fixtures in the sanitizer test suite and its generated reports (MEC-316)"
 condition = "AND"
-paths = ['''^test/cases\.js$''']
+paths = ['''^test/cases\.js$''', '''^test/reports/''']
 regexTarget = "match"
 regexes = ['''^\$9\$FAKE[A-Za-z0-9]*$''']
 
