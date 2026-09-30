@@ -21,11 +21,20 @@ description = "MEC-13 synthetic PEM-header label in 7458b76 (case 88), relabelle
 condition = "AND"
 commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
 paths = ['''^test/cases\.js$''']
+# case 88's fixture body (mecmcp#392 dropped the redundant custom
+# pem-private-key rule since the default private-key rule already covers
+# all key types, so this exception -- formerly under pem-private-key --
+# now lives directly under private-key).
+[[rules.allowlists]]
+description = "synthetic case-88 PEM header (body is literal FAKEKEYDATA88)"
+condition = "AND"
+paths = ['''^test/cases\.js$''']
+regexTarget = "line"
+regexes = ['''FAKEKEYDATA88''']
 # MEC-18 round-3 finding 3 extended case 115 with a second, legacy-encrypted
 # PEM block (Proc-Type/DEK-Info headers) to reproduce the round-3 review's
 # fail-open scenario. Body content on the surrounding lines is literal
-# FAKE115* placeholder text, no real key material (see the pem-private-key
-# allowlist below for the matching header-line finding).
+# FAKE115* placeholder text, no real key material.
 [[rules.allowlists]]
 description = "MEC-18 round-3 finding 3: synthetic second PEM block in case 115"
 condition = "AND"
@@ -35,8 +44,7 @@ regexes = ['''FAKE115''']
 # MEC-731 re-review NEW-1: case 119 adds synthetic CRLF/trailing-space/
 # same-line BEGIN-marker PEM fixtures to reproduce the fail-open regression
 # fixed in this PR. Body content is literal FAKE119* placeholder text, no
-# real key material (see the pem-private-key allowlist below for the
-# matching header-line finding).
+# real key material.
 [[rules.allowlists]]
 description = "MEC-731 re-review NEW-1: synthetic CRLF/trailing-space/same-line PEM fixtures in case 119"
 condition = "AND"
@@ -44,12 +52,11 @@ paths = ['''^test/cases\.js$''']
 regexTarget = "line"
 regexes = ['''FAKE119''']
 
-# The two vendor rules below (added by this PR, MEC-30) are not in gitleaks'
-# default ruleset, so PR #4's test fixtures were never checked against them
-# and both fire on synthetic values in test/cases.js. Each allowlist is
-# scoped to the exact fixture text (or, where that's not possible, to the
-# one historical commit + path), not the whole file -- a real secret added
-# to test/cases.js in a later commit still alerts.
+# The vendor rule below is not in gitleaks' default ruleset, so PR #4's
+# test fixtures were never checked against it and it fires on a synthetic
+# value in test/cases.js. The allowlist is scoped to the exact fixture
+# text, not the whole file -- a real secret added to test/cases.js in a
+# later commit still alerts.
 [[rules]]
 id = "junos-type9-secret"
 [[rules.allowlists]]
@@ -59,28 +66,26 @@ paths = ['''^test/cases\.js$''', '''^test/reports/''']
 regexTarget = "match"
 regexes = ['''^\$9\$FAKE[A-Za-z0-9]*$''']
 
+# MEC-141 re-review F1: mecmcp#392 dropped the custom pem-private-key rule
+# on the assumption that the default private-key rule already covers all
+# key types. That is only true for complete PEM blocks -- the default rule
+# requires a full header, a >=64-char body, and the closing footer, so it
+# misses truncated/partial PEM (exactly the shape this repo's fixture suite
+# produces, e.g. cases 115 and 119). This repo-local rule restores
+# header-only detection so partial keys still alert.
 [[rules]]
-id = "pem-private-key"
+id = "pem-private-key-header"
+description = "PEM private key header (catches truncated/partial blocks)"
+regex = '''-----BEGIN\s+((EC|RSA|DSA|OPENSSH|ENCRYPTED)\s+)?PRIVATE KEY-----|-----BEGIN PGP PRIVATE KEY BLOCK-----'''
+tags = ["pem", "secret"]
 [[rules.allowlists]]
-description = "synthetic case-88 PEM header (body is literal FAKEKEYDATA88)"
+description = "synthetic PEM fixtures in test/cases.js (FAKEKEYDATA88 / FAKE115* / FAKE119*)"
 condition = "AND"
 paths = ['''^test/cases\.js$''']
 regexTarget = "line"
-regexes = ['''FAKEKEYDATA88''']
+regexes = ['''FAKEKEYDATA88''', '''FAKE115''', '''FAKE119''']
 [[rules.allowlists]]
 description = "MEC-13 pre-relabel description line in 7458b76"
 condition = "AND"
 commits = ["7458b76ec9da82cdd4d13298a71376d2b8d19b52"]
 paths = ['''^test/cases\.js$''']
-[[rules.allowlists]]
-description = "MEC-18 round-2 finding 4: synthetic truncated-PEM fixture (case 115), body is literal FAKE115* placeholder text, no real key material"
-condition = "AND"
-paths = ['''^test/cases\.js$''']
-regexTarget = "line"
-regexes = ['''FAKE115''']
-[[rules.allowlists]]
-description = "MEC-731 re-review NEW-1: synthetic CRLF/trailing-space/same-line PEM fixtures (case 119), body is literal FAKE119* placeholder text, no real key material"
-condition = "AND"
-paths = ['''^test/cases\.js$''']
-regexTarget = "line"
-regexes = ['''FAKE119''']
