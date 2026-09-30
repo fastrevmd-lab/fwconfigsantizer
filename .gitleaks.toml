@@ -43,6 +43,12 @@ condition = "AND"
 paths = ['''^test/cases\.js$''']
 regexTarget = "line"
 regexes = ['''FAKE119''']
+# MEC-316: test run.js generates a report directory; add it to the allowlist
+# since it contains synthetic secret-shaped fixture data.
+[[rules.allowlists]]
+description = "MEC-316 test report output directory contains synthetic fixture data"
+condition = "AND"
+paths = ['''^test/reports/''']
 
 # The two vendor rules below (added by this PR, MEC-30) are not in gitleaks'
 # default ruleset, so PR #4's test fixtures were never checked against them
